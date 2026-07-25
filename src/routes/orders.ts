@@ -3,7 +3,7 @@ import { z } from "zod";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { prisma } from "../lib/prisma";
-import { authenticate } from "../middleware/auth";
+import { authenticate, requireAdmin } from "../middleware/auth";
 
 const router = Router();
 
@@ -142,8 +142,10 @@ router.post("/verify", async (req, res) => {
 });
 
 router.get("/", authenticate, async (req, res) => {
+  const where = req.user!.role === "ADMIN" ? {} : { userId: req.user!.id };
+
   const orders = await prisma.order.findMany({
-    where: { userId: req.user!.id },
+    where,
     orderBy: { createdAt: "desc" },
     include: {
       items: {
