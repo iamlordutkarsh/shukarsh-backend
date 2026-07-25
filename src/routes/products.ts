@@ -18,16 +18,31 @@ const productSchema = z.object({
   categoryId: z.string().min(1),
 });
 
+const sortOptions = {
+  newest: { createdAt: "desc" },
+  oldest: { createdAt: "asc" },
+  "price-asc": { price: "asc" },
+  "price-desc": { price: "desc" },
+  name: { name: "asc" },
+} as const;
+
+type SortKey = keyof typeof sortOptions;
+
 router.get("/", async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 12));
   const categoryId = req.query.categoryId as string | undefined;
   const search = req.query.search as string | undefined;
+  const sortKey = req.query.sort as SortKey | undefined;
+  const orderBy = sortKey && sortKey in sortOptions ? sortOptions[sortKey] : sortOptions.newest;
 
   const where: any = { isActive: true };
   if (categoryId) where.categoryId = categoryId;
   if (search) {
-    where.name = { contains: search, mode: "insensitive" };
+    where.OR = [
+      { name: { contains: search, mode: "insensitive" } },
+      { description: { contains: search, mode: "insensitive" } },
+    ];
   }
 
   const [products, total] = await Promise.all([
@@ -35,7 +50,7 @@ router.get("/", async (req, res) => {
       where,
       skip: (page - 1) * limit,
       take: limit,
-      orderBy: { createdAt: "desc" },
+      orderBy,
       include: { category: { select: { id: true, name: true, slug: true } } },
     }),
     prisma.product.count({ where }),

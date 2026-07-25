@@ -5,6 +5,7 @@ import authRoutes from "./routes/auth";
 import categoryRoutes from "./routes/categories";
 import productRoutes from "./routes/products";
 import orderRoutes from "./routes/orders";
+import newsletterRoutes from "./routes/newsletter";
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
+app.use("/api/newsletter", newsletterRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
