@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { serializeProduct, serializeProducts } from "../lib/product";
 import { authenticate, requireAdmin } from "../middleware/auth";
 
 const router = Router();
@@ -41,7 +42,7 @@ router.get("/", async (req, res) => {
   ]);
 
   res.json({
-    products,
+    products: serializeProducts(products),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
@@ -57,7 +58,7 @@ router.get("/:slug", async (req, res) => {
     return;
   }
 
-  res.json({ product });
+  res.json({ product: serializeProduct(product) });
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {

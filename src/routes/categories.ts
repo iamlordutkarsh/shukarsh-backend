@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { serializeProducts } from "../lib/product";
 import { authenticate, requireAdmin } from "../middleware/auth";
 
 const router = Router();
@@ -37,7 +38,7 @@ router.get("/:slug", async (req, res) => {
     return;
   }
 
-  res.json({ category });
+  res.json({ category: { ...category, products: serializeProducts(category.products) } });
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {
