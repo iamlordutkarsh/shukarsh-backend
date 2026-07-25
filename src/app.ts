@@ -1,6 +1,9 @@
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import authRoutes from "./routes/auth";
+import categoryRoutes from "./routes/categories";
+import productRoutes from "./routes/products";
 
 dotenv.config();
 
@@ -20,6 +23,19 @@ app.get("/health", (_req, res) => {
 
 app.get("/", (_req, res) => {
   res.json({ message: "Shukarsh API is running" });
+});
+
+app.use("/api/auth", authRoutes);
+app.use("/api/categories", categoryRoutes);
+app.use("/api/products", productRoutes);
+
+app.use((_req, res) => {
+  res.status(404).json({ error: "Route not found" });
+});
+
+app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
+  console.error(err.stack);
+  res.status(500).json({ error: "Something went wrong" });
 });
 
 export default app;
