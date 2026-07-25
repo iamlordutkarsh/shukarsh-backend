@@ -3,6 +3,7 @@ import { z } from "zod";
 import Razorpay from "razorpay";
 import crypto from "crypto";
 import { prisma } from "../lib/prisma";
+import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 
 const router = Router();
@@ -55,6 +56,20 @@ router.post("/create", async (req, res) => {
   const { items, shippingAddress, email } = result.data;
   const totalAmount = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
+  const token = req.headers.authorization?.startsWith("Bearer ")
+    ? req.headers.authorization.slice(7)
+    : null;
+
+  let userId: string | undefined;
+  if (token) {
+    try {
+      const payload = verifyToken(token);
+      userId = payload.id;
+    } catch {
+      userId = undefined;
+    }
+  }
+
   if (totalAmount <= 0) {
     res.status(400).json({ error: "Cart total must be greater than zero" });
     return;
@@ -79,6 +94,7 @@ router.post("/create", async (req, res) => {
         totalAmount: totalAmount,
         shippingAddress: shippingAddress,
         razorpayOrderId: razorpayOrder.id,
+        userId: userId,
         items: {
           create: items.map((item) => ({
             productId: item.productId,
