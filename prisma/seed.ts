@@ -1,6 +1,6 @@
 import { prisma } from "../src/lib/prisma";
 import { hashPassword } from "../src/lib/auth";
-import { UserRole } from "../src/generated/prisma";
+import { UserRole } from "@prisma/client";
 
 async function main() {
   const admin = await prisma.user.upsert({

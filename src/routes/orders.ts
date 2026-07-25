@@ -6,9 +6,15 @@ import { authenticate } from "../middleware/auth";
 
 const router = Router();
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
-  apiVersion: "2026-06-24.dahlia",
-});
+function getStripe(): Stripe {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) {
+    throw new Error("STRIPE_SECRET_KEY is not configured");
+  }
+  return new Stripe(key, {
+    apiVersion: "2026-06-24.dahlia",
+  });
+}
 
 const shippingAddressSchema = z.object({
   line1: z.string().min(1),
@@ -53,6 +59,7 @@ router.post("/checkout", async (req, res) => {
   }
 
   try {
+    const stripe = getStripe();
     const lineItems = items.map((item) => ({
       price_data: {
         currency: "usd",
