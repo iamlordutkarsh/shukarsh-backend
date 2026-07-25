@@ -13,7 +13,9 @@ services:
         sync: false
       - key: JWT_SECRET
         generateValue: true
-      - key: STRIPE_SECRET_KEY
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
         sync: false
       - key: FRONTEND_URL
         sync: false

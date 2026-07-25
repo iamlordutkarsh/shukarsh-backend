@@ -9,7 +9,7 @@ Backend API for the Shukarsh e-commerce store.
 - TypeScript
 - Prisma ORM
 - PostgreSQL (Supabase)
-- Stripe
+- Razorpay
 
 ## Getting Started
 
@@ -67,13 +67,14 @@ The API will be available at `http://localhost:5000`.
 4. Add environment variables:
    - `DATABASE_URL` (from Supabase)
    - `JWT_SECRET` (random string)
-   - `STRIPE_SECRET_KEY` (from Stripe)
+   - `RAZORPAY_KEY_ID` (from Razorpay)
+   - `RAZORPAY_KEY_SECRET` (from Razorpay)
    - `FRONTEND_URL` (your Vercel frontend URL)
    - `CORS_ORIGIN` (your Vercel frontend URL)
 
-### Stripe
+### Razorpay
 
-1. Create a Stripe account at [stripe.com](https://stripe.com).
-2. Get your test secret key from the dashboard.
-3. Set `STRIPE_SECRET_KEY` in your environment variables.
-4. Use Stripe test cards for testing, e.g., `4242 4242 4242 4242`.
+1. Create a Razorpay account at [razorpay.com](https://razorpay.com).
+2. Get your test key id and key secret from the dashboard.
+3. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in your environment variables.
+4. Use Razorpay test cards for testing, e.g., `5267 3181 8797 5449`.
