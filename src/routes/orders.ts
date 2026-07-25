@@ -1,19 +1,19 @@
 import { Router } from "express";
 import { z } from "zod";
-import Stripe from "stripe";
+import Razorpay from "razorpay";
+import crypto from "crypto";
 import { prisma } from "../lib/prisma";
 import { authenticate } from "../middleware/auth";
 
 const router = Router();
 
-function getStripe(): Stripe {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key) {
-    throw new Error("STRIPE_SECRET_KEY is not configured");
+function getRazorpay(): Razorpay {
+  const keyId = process.env.RAZORPAY_KEY_ID;
+  const keySecret = process.env.RAZORPAY_KEY_SECRET;
+  if (!keyId || !keySecret) {
+    throw new Error("Razorpay keys are not configured");
   }
-  return new Stripe(key, {
-    apiVersion: "2026-06-24.dahlia",
-  });
+  return new Razorpay({ key_id: keyId, key_secret: keySecret });
 }
 
 const shippingAddressSchema = z.object({
@@ -25,7 +25,7 @@ const shippingAddressSchema = z.object({
   country: z.string().default("US"),
 });
 
-const checkoutSchema = z.object({
+const createOrderSchema = z.object({
   items: z.array(
     z.object({
       productId: z.string().min(1),
@@ -39,18 +39,20 @@ const checkoutSchema = z.object({
   email: z.string().email(),
 });
 
-router.post("/checkout", async (req, res) => {
-  const result = checkoutSchema.safeParse(req.body);
+const verifyPaymentSchema = z.object({
+  razorpayOrderId: z.string().min(1),
+  razorpayPaymentId: z.string().min(1),
+  razorpaySignature: z.string().min(1),
+});
+
+router.post("/create", async (req, res) => {
+  const result = createOrderSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
     return;
   }
 
   const { items, shippingAddress, email } = result.data;
-  const token = req.headers.authorization?.startsWith("Bearer ")
-    ? req.headers.authorization.slice(7)
-    : null;
-
   const totalAmount = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
 
   if (totalAmount <= 0) {
@@ -59,27 +61,15 @@ router.post("/checkout", async (req, res) => {
   }
 
   try {
-    const stripe = getStripe();
-    const lineItems = items.map((item) => ({
-      price_data: {
-        currency: "usd",
-        product_data: {
-          name: item.name,
-          images: item.image ? [item.image] : undefined,
-        },
-        unit_amount: Math.round(item.price * 100),
-      },
-      quantity: item.quantity,
-    }));
+    const razorpay = getRazorpay();
+    const amountInPaise = Math.round(totalAmount * 100);
 
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: lineItems,
-      mode: "payment",
-      success_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/checkout/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.FRONTEND_URL || "http://localhost:3000"}/checkout/cancel`,
-      customer_email: email,
-      metadata: {
+    const razorpayOrder = await razorpay.orders.create({
+      amount: amountInPaise,
+      currency: "INR",
+      receipt: `order_${Date.now()}`,
+      notes: {
+        email,
         shippingAddress: JSON.stringify(shippingAddress),
       },
     });
@@ -88,7 +78,7 @@ router.post("/checkout", async (req, res) => {
       data: {
         totalAmount: totalAmount,
         shippingAddress: shippingAddress,
-        stripeSessionId: session.id,
+        razorpayOrderId: razorpayOrder.id,
         items: {
           create: items.map((item) => ({
             productId: item.productId,
@@ -99,10 +89,55 @@ router.post("/checkout", async (req, res) => {
       },
     });
 
-    res.json({ orderId: order.id, sessionUrl: session.url });
+    res.json({
+      orderId: order.id,
+      razorpayOrderId: razorpayOrder.id,
+      amount: amountInPaise,
+      currency: "INR",
+      keyId: process.env.RAZORPAY_KEY_ID,
+    });
   } catch (error) {
-    console.error("Checkout error:", error);
-    res.status(500).json({ error: "Failed to create checkout session" });
+    console.error("Razorpay order creation error:", error);
+    res.status(500).json({ error: "Failed to create Razorpay order" });
+  }
+});
+
+router.post("/verify", async (req, res) => {
+  const result = verifyPaymentSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
+    return;
+  }
+
+  const { razorpayOrderId, razorpayPaymentId, razorpaySignature } = result.data;
+
+  const secret = process.env.RAZORPAY_KEY_SECRET;
+  if (!secret) {
+    res.status(500).json({ error: "Razorpay secret is not configured" });
+    return;
+  }
+
+  const body = `${razorpayOrderId}|${razorpayPaymentId}`;
+  const expectedSignature = crypto.createHmac("sha256", secret).update(body).digest("hex");
+
+  if (expectedSignature !== razorpaySignature) {
+    res.status(400).json({ error: "Invalid payment signature" });
+    return;
+  }
+
+  try {
+    const order = await prisma.order.update({
+      where: { razorpayOrderId },
+      data: {
+        paymentStatus: "PAID",
+        razorpayPaymentId,
+        razorpaySignature,
+      },
+    });
+
+    res.json({ message: "Payment verified", orderId: order.id });
+  } catch (error) {
+    res.status(404).json({ error: "Order not found" });
   }
 });
 

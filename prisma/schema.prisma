@@ -116,17 +116,19 @@ model CartItem {
 }
 
 model Order {
-  id              String        @id @default(uuid())
-  userId          String?
-  user            User?         @relation(fields: [userId], references: [id])
-  status          OrderStatus   @default(PENDING)
-  paymentStatus   PaymentStatus @default(PENDING)
-  totalAmount     Decimal       @db.Decimal(10, 2)
-  shippingAddress Json?
-  stripeSessionId String?       @unique
-  items           OrderItem[]
-  createdAt       DateTime      @default(now())
-  updatedAt       DateTime      @updatedAt
+  id                String        @id @default(uuid())
+  userId            String?
+  user              User?         @relation(fields: [userId], references: [id])
+  status            OrderStatus   @default(PENDING)
+  paymentStatus     PaymentStatus @default(PENDING)
+  totalAmount       Decimal       @db.Decimal(10, 2)
+  shippingAddress   Json?
+  razorpayOrderId   String?       @unique
+  razorpayPaymentId String?
+  razorpaySignature String?
+  items             OrderItem[]
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
 }
 
 model OrderItem {
