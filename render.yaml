@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: shukarsh-backend
+    runtime: node
+    repo: https://github.com/iamlordutkarsh/shukarsh-backend
+    branch: main
+    buildCommand: npm install; npm run build
+    startCommand: npm run start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: CORS_ORIGIN
+        sync: false
