@@ -6,6 +6,8 @@ import categoryRoutes from "./routes/categories";
 import productRoutes from "./routes/products";
 import orderRoutes from "./routes/orders";
 import newsletterRoutes from "./routes/newsletter";
+import uploadRoutes from "./routes/uploads";
+import wishlistRoutes from "./routes/wishlist";
 
 dotenv.config();
 
@@ -32,6 +34,8 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/newsletter", newsletterRoutes);
+app.use("/api/uploads", uploadRoutes);
+app.use("/api/wishlist", wishlistRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });

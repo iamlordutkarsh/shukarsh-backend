@@ -42,6 +42,7 @@ model User {
   carts     Cart[]
   orders    Order[]
   reviews   Review[]
+  wishlist  WishlistItem[]
 }
 
 model Address {
@@ -91,6 +92,7 @@ model Product {
   cartItems  CartItem[]
   orderItems OrderItem[]
   reviews    Review[]
+  wishlisted WishlistItem[]
 }
 
 model Cart {
@@ -119,6 +121,7 @@ model Order {
   id                String        @id @default(uuid())
   userId            String?
   user              User?         @relation(fields: [userId], references: [id])
+  email             String?
   status            OrderStatus   @default(PENDING)
   paymentStatus     PaymentStatus @default(PENDING)
   totalAmount       Decimal       @db.Decimal(10, 2)
@@ -146,6 +149,17 @@ model NewsletterSubscriber {
   id        String   @id @default(uuid())
   email     String   @unique
   createdAt DateTime @default(now())
+}
+
+model WishlistItem {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([userId, productId])
 }
 
 model Review {

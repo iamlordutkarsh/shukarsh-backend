@@ -95,6 +95,7 @@ router.post("/create", async (req, res) => {
         shippingAddress: shippingAddress,
         razorpayOrderId: razorpayOrder.id,
         userId: userId,
+        email: email,
         items: {
           create: items.map((item) => ({
             productId: item.productId,
@@ -157,6 +158,18 @@ router.post("/verify", async (req, res) => {
   }
 });
 
+function serializeOrder(order: any) {
+  const { user, ...rest } = order;
+
+  return {
+    ...rest,
+    totalAmount: Number(order.totalAmount),
+    customerEmail: order.email ?? user?.email ?? null,
+    customerName: [user?.firstName, user?.lastName].filter(Boolean).join(" ") || null,
+    items: order.items.map((item: any) => ({ ...item, price: Number(item.price) })),
+  };
+}
+
 router.get("/", authenticate, async (req, res) => {
   const where = req.user!.role === "ADMIN" ? {} : { userId: req.user!.id };
 
@@ -164,6 +177,7 @@ router.get("/", authenticate, async (req, res) => {
     where,
     orderBy: { createdAt: "desc" },
     include: {
+      user: { select: { email: true, firstName: true, lastName: true } },
       items: {
         include: {
           product: { select: { id: true, name: true, slug: true, images: true } },
@@ -172,7 +186,7 @@ router.get("/", authenticate, async (req, res) => {
     },
   });
 
-  res.json({ orders });
+  res.json({ orders: orders.map(serializeOrder) });
 });
 
 export default router;
