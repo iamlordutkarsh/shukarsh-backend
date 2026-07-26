@@ -157,7 +157,11 @@ Run the poller whichever way suits the host:
 - **Host that sleeps, or a separate scheduler:** set `CRON_SECRET` and have a
   cron job `POST /api/logistics/sync` with an `x-cron-key` header.
 
-Admins can also press **Refresh tracking** on the orders page at any time.
+Admins can also press **Refresh tracking** on the orders page at any time. That
+button and the orders panel share a cooldown so repeated refreshes cost no
+courier calls: inside the window they answer "already up to date" instead.
+Set `TRACKING_SYNC_MIN_GAP_SEC` to change it from the default 300 seconds. The
+cron path ignores the cooldown and always does the work.
 
 #### Logistics endpoints
 

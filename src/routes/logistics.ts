@@ -1,9 +1,8 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import crypto from "crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
-import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
@@ -158,10 +157,25 @@ router.get("/pincode/:pincode", async (req, res) => {
   }
 });
 
-function cronKeyMatches(provided: string | undefined): boolean {
-  const expected = process.env.CRON_SECRET;
+/** Constant time comparison of a header against a configured shared secret. */
+function secretMatches(provided: string | undefined, expected: string | undefined): boolean {
   if (!expected || !provided || provided.length !== expected.length) return false;
   return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
+
+/**
+ * A scheduler holding the cron secret, or an ordinary admin. Delegates to the
+ * shared middleware rather than re-reading the token, so admin access keeps one
+ * definition and req.user is populated either way.
+ */
+function adminOrCron(req: Request, res: Response, next: NextFunction): void {
+  if (secretMatches(req.headers["x-cron-key"] as string | undefined, process.env.CRON_SECRET)) {
+    res.locals.byCron = true;
+    next();
+    return;
+  }
+
+  authenticate(req, res, () => requireAdmin(req, res, next));
 }
 
 /**
@@ -169,25 +183,8 @@ function cronKeyMatches(provided: string | undefined): boolean {
  * moved on. Open to an admin from the dashboard, or to a scheduler holding the
  * cron secret.
  */
-router.post("/sync", async (req, res) => {
-  const byCron = cronKeyMatches(req.headers["x-cron-key"] as string | undefined);
-
-  if (!byCron) {
-    const header = req.headers.authorization;
-    if (!header?.startsWith("Bearer ")) {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-    try {
-      if (verifyToken(header.slice(7)).role !== "ADMIN") {
-        res.status(403).json({ error: "Admin access required" });
-        return;
-      }
-    } catch {
-      res.status(401).json({ error: "Unauthorized" });
-      return;
-    }
-  }
+router.post("/sync", adminOrCron, async (_req, res) => {
+  const byCron = res.locals.byCron === true;
 
   try {
     // A scheduler runs on its own clock and should always do the work. Anything
@@ -596,16 +593,9 @@ router.get("/orders/:id/track", authenticate, async (req, res) => {
   }
 });
 
-function tokenMatches(provided: string | undefined): boolean {
-  const expected = process.env.SHIPROCKET_WEBHOOK_TOKEN;
-  if (!expected) return false;
-  if (!provided || provided.length !== expected.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
-}
-
 /** Courier status pushes. Always answers 200 so the provider keeps the hook enabled. */
 router.post("/webhook", async (req, res) => {
-  if (!tokenMatches(req.headers["x-api-key"] as string | undefined)) {
+  if (!secretMatches(req.headers["x-api-key"] as string | undefined, process.env.SHIPROCKET_WEBHOOK_TOKEN)) {
     // An unset token and a wrong one both answer 401, so say which from here.
     console.warn(
       process.env.SHIPROCKET_WEBHOOK_TOKEN
