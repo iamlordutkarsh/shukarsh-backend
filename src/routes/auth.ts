@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { hashPassword, verifyPassword, generateToken } from "../lib/auth";
 import { authenticate } from "../middleware/auth";
+import { loginLimiter, registerLimiter } from "../middleware/rate-limit";
 
 const router = Router();
 
@@ -18,7 +19,7 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
-router.post("/register", async (req, res) => {
+router.post("/register", registerLimiter, async (req, res) => {
   const result = registerSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
@@ -48,7 +49,7 @@ router.post("/register", async (req, res) => {
   res.status(201).json({ user, token });
 });
 
-router.post("/login", async (req, res) => {
+router.post("/login", loginLimiter, async (req, res) => {
   const result = loginSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });

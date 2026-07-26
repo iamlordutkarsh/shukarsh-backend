@@ -14,6 +14,10 @@ dotenv.config();
 
 const app = express();
 
+// Render terminates TLS in front of us, so the client IP is only in the
+// forwarded header. Rate limiting buckets by IP and would otherwise see one.
+app.set("trust proxy", 1);
+
 app.use(
   cors({
     origin: process.env.CORS_ORIGIN || "http://localhost:3000",
