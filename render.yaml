@@ -4,7 +4,7 @@ services:
     runtime: node
     repo: https://github.com/iamlordutkarsh/shukarsh-backend
     branch: main
-    buildCommand: npm install; npm run build
+    buildCommand: npm install && npm run build && npx prisma migrate deploy
     startCommand: npm run start
     envVars:
       - key: NODE_ENV

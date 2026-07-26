@@ -58,6 +58,22 @@ The API will be available at `http://localhost:5000`.
 3. Copy the **URI** connection string.
 4. Set it as `DATABASE_URL` in Render and locally.
 
+### Schema changes
+
+Migrations live in `prisma/migrations` and are committed. Render runs
+`prisma migrate deploy` as the last step of its build, so a deploy applies any
+new migration before the new code serves traffic. Never use `prisma db push`
+against production: it changes the database without recording a migration, and
+the next deploy will not know what has already been applied.
+
+To change the schema, edit `prisma/schema.prisma`, then:
+
+```bash
+npx prisma migrate dev --name what_changed
+```
+
+Commit the generated folder under `prisma/migrations` along with the schema.
+
 ### Render
 
 1. Push this repo to GitHub.

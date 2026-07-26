@@ -9,5 +9,3 @@ coverage/
 .vscode/
 .idea/
 *.tsbuildinfo
-prisma/migrations/*/
-!prisma/migrations/migration_lock.toml
