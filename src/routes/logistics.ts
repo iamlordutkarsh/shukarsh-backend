@@ -568,6 +568,12 @@ function tokenMatches(provided: string | undefined): boolean {
 /** Courier status pushes. Always answers 200 so the provider keeps the hook enabled. */
 router.post("/webhook", async (req, res) => {
   if (!tokenMatches(req.headers["x-api-key"] as string | undefined)) {
+    // An unset token and a wrong one both answer 401, so say which from here.
+    console.warn(
+      process.env.SHIPROCKET_WEBHOOK_TOKEN
+        ? "Shiprocket webhook rejected: the x-api-key does not match SHIPROCKET_WEBHOOK_TOKEN."
+        : "Shiprocket webhook rejected: SHIPROCKET_WEBHOOK_TOKEN is not set, so every delivery will fail."
+    );
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -616,7 +622,11 @@ router.post("/webhook", async (req, res) => {
         where: { id: shipment.orderId },
         data: { status: next as never },
       });
+      console.log(`Shiprocket webhook moved order ${shipment.orderId} to ${next} (${status ?? statusCode})`);
+      return;
     }
+
+    console.log(`Shiprocket webhook verified, recorded "${status ?? statusCode}" for order ${shipment.orderId}`);
   } catch (error) {
     console.error("Shiprocket webhook processing failed:", error);
   }
