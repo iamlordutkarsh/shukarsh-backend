@@ -141,6 +141,24 @@ courier account is approved.
 Auth tokens are cached for nine days and refreshed automatically on a 401, so
 normal traffic costs no extra login calls.
 
+#### Orders that move themselves
+
+Once a shipment has an AWB, courier scans drive the order status: Processing
+becomes Shipped on dispatch and Delivered on delivery, with no clicking.
+
+Two things do it. The webhook above is the push, and a poller is the safety net
+for deliveries a webhook drops or that arrive while the service is asleep. An
+order only ever moves forward, and a cancellation or return recorded by an admin
+is never overwritten by a late scan.
+
+Run the poller whichever way suits the host:
+
+- **Always-on host:** set `TRACKING_SYNC_INTERVAL_MIN` to something like `30`.
+- **Host that sleeps, or a separate scheduler:** set `CRON_SECRET` and have a
+  cron job `POST /api/logistics/sync` with an `x-cron-key` header.
+
+Admins can also press **Refresh tracking** on the orders page at any time.
+
 #### Logistics endpoints
 
 | Method | Path | Access | Purpose |
