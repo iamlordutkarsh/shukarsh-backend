@@ -9,7 +9,7 @@ import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
 import { sendDispatchNotice } from "../lib/notifications";
 import { nextOrderStatus } from "../lib/order-status";
-import { syncActiveShipments } from "../lib/tracking-sync";
+import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
 import { priceCart, quoteShipping } from "../lib/shipping";
 import { createTtlCache } from "../lib/parcel";
 import {
@@ -175,7 +175,9 @@ router.post("/sync", async (req, res) => {
   }
 
   try {
-    res.json(await syncActiveShipments());
+    // A scheduler runs on its own clock and should always do the work. Anything
+    // a person can click gets the cooldown.
+    res.json(byCron ? { ...(await syncActiveShipments()), skipped: false } : await syncActiveShipmentsThrottled());
   } catch (error) {
     handleProviderError(res, error, "Could not refresh tracking");
   }

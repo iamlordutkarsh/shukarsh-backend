@@ -70,6 +70,39 @@ export async function syncActiveShipments(limit = 40): Promise<SyncResult> {
   return result;
 }
 
+const MIN_GAP_MS = (Number(process.env.TRACKING_SYNC_MIN_GAP_SEC) || 300) * 1000;
+let lastRunAt = 0;
+let lastResult: SyncResult = { checked: 0, advanced: 0, failed: 0 };
+let inFlight: Promise<SyncResult> | null = null;
+
+export interface ThrottledSync extends SyncResult {
+  /** True when this call reused a recent run instead of asking the courier again. */
+  skipped: boolean;
+}
+
+/**
+ * Sync guarded by a cooldown, for anything a person can trigger repeatedly.
+ *
+ * The admin panel runs this every time it opens, so without a gap a few page
+ * refreshes would mean a courier lookup per parcel each time. Concurrent calls
+ * share one run rather than stacking up.
+ */
+export async function syncActiveShipmentsThrottled(): Promise<ThrottledSync> {
+  const since = Date.now() - lastRunAt;
+  if (since < MIN_GAP_MS) return { ...lastResult, skipped: true };
+  if (inFlight) return { ...(await inFlight), skipped: false };
+
+  inFlight = syncActiveShipments();
+
+  try {
+    lastResult = await inFlight;
+    lastRunAt = Date.now();
+    return { ...lastResult, skipped: false };
+  } finally {
+    inFlight = null;
+  }
+}
+
 /**
  * Optional in-process poller. Off unless an interval is configured, since a
  * host that sleeps between requests cannot be relied on to run it.
