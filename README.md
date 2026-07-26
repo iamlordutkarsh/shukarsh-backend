@@ -96,6 +96,31 @@ Commit the generated folder under `prisma/migrations` along with the schema.
 3. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in your environment variables.
 4. Use Razorpay test cards for testing, e.g., `5267 3181 8797 5449`.
 
+#### Payment webhook
+
+Set this up. The browser calls `/api/orders/verify` after a successful payment,
+but that call never happens if the customer closes the tab, loses signal or the
+page crashes in that moment. Razorpay would have taken the money while the order
+sat on `PENDING` with stock never decremented.
+
+1. Razorpay dashboard > **Settings > Webhooks > Add New Webhook**.
+2. URL: `https://your-api-host/api/orders/webhook`
+3. Secret: any long random string, also set as `RAZORPAY_WEBHOOK_SECRET`.
+4. Subscribe to **payment.captured**.
+
+Both paths converge on the same conditional update, so whichever arrives second
+sees the order already paid and skips the stock decrement rather than running it
+twice.
+
+### Email
+
+Order confirmations and dispatch notices go out through
+[Resend](https://resend.com) over its REST API, so there is no SDK to install.
+Set `RESEND_API_KEY` and `EMAIL_FROM` (a sender on a domain you have verified
+with Resend). Leave them unset and the store behaves exactly as before, just
+without email. A send that fails is logged and never blocks a payment or a
+shipment.
+
 ### Shiprocket
 
 Shipping is optional. With no Shiprocket credentials set the store still takes

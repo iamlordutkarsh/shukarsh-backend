@@ -17,6 +17,14 @@ services:
         sync: false
       - key: RAZORPAY_KEY_SECRET
         sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: EMAIL_REPLY_TO
+        sync: false
       - key: FRONTEND_URL
         sync: false
       - key: CORS_ORIGIN
