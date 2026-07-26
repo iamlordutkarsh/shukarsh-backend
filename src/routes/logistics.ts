@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
+import { sendDispatchNotice } from "../lib/notifications";
 import { priceCart, quoteShipping } from "../lib/shipping";
 import { createTtlCache } from "../lib/parcel";
 import {
@@ -301,6 +302,8 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
         items: { include: { product: { select: { id: true, name: true, slug: true, images: true } } } },
       },
     });
+
+    if (shipment.awb) void sendDispatchNotice(order.id);
 
     res.json({ order: serializeOrder(updated) });
   } catch (error) {
