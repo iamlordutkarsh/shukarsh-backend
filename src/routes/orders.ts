@@ -10,6 +10,7 @@ import { shippingAddressSchema } from "../lib/address";
 import { priceCart, resolveShipping } from "../lib/shipping";
 import { serializeOrder } from "../lib/order";
 import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
+import { InsufficientStockError, applyOrderStatus } from "../lib/order-status";
 import { sendOrderConfirmation } from "../lib/notifications";
 
 const router = Router();
@@ -272,46 +273,22 @@ router.patch("/:id/status", authenticate, requireAdmin, async (req, res) => {
   const id = req.params.id as string;
 
   try {
-    const current = await prisma.order.findUnique({ where: { id }, include: { items: true } });
-    if (!current) {
+    const change = await applyOrderStatus(id, result.data.status);
+    if (!change) {
       res.status(404).json({ error: "Order not found" });
       return;
     }
 
-    const nextStatus = result.data.status;
-    const paid = current.paymentStatus === "PAID";
-    const closing = nextStatus === "CANCELLED" || nextStatus === "RETURNED";
-
-    // Cancelling a paid order puts its stock back. Reopening one has to take it
-    // again, or the catalogue would keep counting units that are still owed.
-    const shouldRelease = paid && closing && !current.stockReleased;
-    const shouldReserve = paid && !closing && current.stockReleased;
-
-    const order = await prisma.$transaction(async (tx) => {
-      if (shouldRelease || shouldReserve) {
-        for (const item of current.items) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: shouldRelease
-              ? { stock: { increment: item.quantity } }
-              : { stock: { decrement: item.quantity } },
-          });
-        }
-      }
-
-      return tx.order.update({
-        where: { id },
-        data: {
-          status: nextStatus,
-          ...(shouldRelease ? { stockReleased: true } : {}),
-          ...(shouldReserve ? { stockReleased: false } : {}),
-        },
-        include: orderInclude,
-      });
-    });
-
-    res.json({ order: serializeOrder(order) });
+    const order = await prisma.order.findUnique({ where: { id }, include: orderInclude });
+    res.json({ order: serializeOrder(order!) });
   } catch (error) {
+    if (error instanceof InsufficientStockError) {
+      res.status(409).json({
+        error: "Reopening this order needs more stock than the catalogue has. Restock it first.",
+      });
+      return;
+    }
+
     console.error("Order status update error:", error);
     res.status(500).json({ error: "Could not update this order" });
   }
