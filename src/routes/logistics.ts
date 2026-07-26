@@ -49,10 +49,25 @@ function asJson(events: TrackingEvent[]): Prisma.InputJsonValue {
 
 const shipSchema = z.object({ courierId: z.number().int().positive().optional() });
 
+/**
+ * Zod's .url() delegates to the URL constructor, which happily parses
+ * javascript: and data:. This value is rendered as an href in the admin panel,
+ * so only the two schemes a courier could legitimately send are allowed.
+ */
+const trackingLinkSchema = z
+  .string()
+  .trim()
+  .max(300)
+  .url()
+  .refine((value) => {
+    const { protocol } = new URL(value);
+    return protocol === "http:" || protocol === "https:";
+  }, "Enter a tracking link starting with http or https");
+
 const manualTrackingSchema = z.object({
   awb: z.string().trim().min(3).max(40),
   courierName: z.string().trim().max(60).optional(),
-  trackingUrl: z.string().trim().url().max(300).optional().or(z.literal("")),
+  trackingUrl: trackingLinkSchema.optional().or(z.literal("")),
 });
 const pickupSchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
@@ -380,6 +395,13 @@ router.patch("/orders/:id/tracking", authenticate, requireAdmin, async (req, res
     return;
   }
 
+  // The same guard /ship applies. An AWB marks the order shipped and emails the
+  // customer, neither of which should happen before the money has arrived.
+  if (order.paymentStatus !== "PAID") {
+    res.status(409).json({ error: "This order has not been paid for yet" });
+    return;
+  }
+
   if (order.shipment?.providerShipmentId) {
     res.status(409).json({
       error: "This order already has a Shiprocket shipment. Cancel it before entering tracking by hand.",
@@ -388,6 +410,9 @@ router.patch("/orders/:id/tracking", authenticate, requireAdmin, async (req, res
   }
 
   const { awb, courierName, trackingUrl } = parsed.data;
+  // Correcting a typo or adding a courier name is an edit, not a dispatch. Only
+  // a genuinely new AWB should tell the customer the parcel has left.
+  const isNewAwb = order.shipment?.awb !== awb;
   const details = {
     provider: "manual",
     awb,
@@ -416,7 +441,7 @@ router.patch("/orders/:id/tracking", authenticate, requireAdmin, async (req, res
       },
     });
 
-    void sendDispatchNotice(id);
+    if (isNewAwb) void sendDispatchNotice(id);
 
     res.json({ order: serializeOrder(updated) });
   } catch (error) {
@@ -495,9 +520,22 @@ router.post("/orders/:id/cancel-shipment", authenticate, requireAdmin, async (re
 
   try {
     await cancelShipmentByAwb(shipment.awb);
+
+    // Clearing the AWB and shipment id is what lets the order be shipped again
+    // or given tracking by hand. Leaving them set made both impossible: the
+    // drawer kept treating the order as shipped, and the manual route kept
+    // answering 409 telling the admin to cancel a shipment already cancelled.
+    // The scans stay in `events`, and the dead AWB is kept in the status line.
     const saved = await prisma.shipment.update({
       where: { orderId: shipment.orderId },
-      data: { status: "CANCELLATION REQUESTED" },
+      data: {
+        status: `CANCELLATION REQUESTED (AWB ${shipment.awb})`,
+        awb: null,
+        providerShipmentId: null,
+        labelUrl: null,
+        trackingUrl: null,
+        statusCode: null,
+      },
     });
     res.json({ shipment: saved });
   } catch (error) {
