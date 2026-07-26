@@ -8,7 +8,7 @@ import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
 import { sendDispatchNotice } from "../lib/notifications";
-import { nextOrderStatus } from "../lib/order-status";
+import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
 import { priceCart, quoteShipping } from "../lib/shipping";
 import { createTtlCache } from "../lib/parcel";
@@ -598,15 +598,18 @@ router.post("/webhook", async (req, res) => {
 
     const statusCode = payload.shipment_status_id != null ? Number(payload.shipment_status_id) : null;
     const status = payload.shipment_status ? String(payload.shipment_status) : null;
+    // A status-only push carries no scans. Writing them straight through would
+    // blank the customer's timeline, and null the code the next push compares.
+    const scans = normalizeEvents(payload.scans ?? []);
 
     await prisma.shipment.update({
       where: { id: shipment.id },
       data: {
-        status,
-        statusCode,
+        status: status ?? shipment.status,
+        statusCode: statusCode ?? shipment.statusCode,
         awb: awb ?? shipment.awb,
         courierName: payload.courier_name ? String(payload.courier_name) : shipment.courierName,
-        events: asJson(normalizeEvents(payload.scans ?? [])),
+        ...(scans.length > 0 ? { events: asJson(scans) } : {}),
         lastSyncedAt: new Date(),
       },
     });
@@ -618,10 +621,8 @@ router.post("/webhook", async (req, res) => {
 
     const next = order ? nextOrderStatus(order.status, orderStatusFromCode(statusCode)) : null;
     if (next) {
-      await prisma.order.update({
-        where: { id: shipment.orderId },
-        data: { status: next as never },
-      });
+      // Goes through applyOrderStatus so a return or refusal puts its stock back.
+      await applyOrderStatus(shipment.orderId, next);
       console.log(`Shiprocket webhook moved order ${shipment.orderId} to ${next} (${status ?? statusCode})`);
       return;
     }

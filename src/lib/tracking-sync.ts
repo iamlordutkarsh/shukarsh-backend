@@ -1,6 +1,6 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
-import { nextOrderStatus } from "./order-status";
+import { applyOrderStatus, nextOrderStatus } from "./order-status";
 import { isShiprocketConfigured, orderStatusFromCode, trackByAwb } from "./shiprocket";
 
 export interface SyncResult {
@@ -8,6 +8,13 @@ export interface SyncResult {
   advanced: number;
   failed: number;
 }
+
+/**
+ * Courier lookups per batch. One request can wait the full Shiprocket timeout,
+ * so running them one after another would let a slow courier hold an admin's
+ * request open for minutes.
+ */
+const CONCURRENCY = 5;
 
 /**
  * Pulls the latest courier scans for everything still in flight and moves the
@@ -26,7 +33,9 @@ export async function syncActiveShipments(limit = 40): Promise<SyncResult> {
     where: {
       awb: { not: null },
       provider: { not: "manual" },
-      order: { status: { in: ["PROCESSING", "SHIPPED"] } },
+      // Delivered stays in scope because a parcel can still come back, and a
+      // dropped return push is exactly what this poller exists to catch.
+      order: { status: { in: ["PROCESSING", "SHIPPED", "DELIVERED"] } },
     },
     include: { order: { select: { id: true, status: true } } },
     // Longest untouched first, and never synced counts as longest.
@@ -34,9 +43,7 @@ export async function syncActiveShipments(limit = 40): Promise<SyncResult> {
     take: limit,
   });
 
-  for (const shipment of shipments) {
-    result.checked += 1;
-
+  const syncOne = async (shipment: (typeof shipments)[number]): Promise<"advanced" | "failed" | "checked"> => {
     try {
       const tracking = await trackByAwb(shipment.awb!);
 
@@ -52,27 +59,39 @@ export async function syncActiveShipments(limit = 40): Promise<SyncResult> {
       });
 
       const next = nextOrderStatus(shipment.order.status, orderStatusFromCode(tracking.statusCode));
-      if (next) {
-        await prisma.order.update({ where: { id: shipment.orderId }, data: { status: next as never } });
-        result.advanced += 1;
-        console.log(`Tracking sync moved order ${shipment.orderId} to ${next}`);
-      }
+      if (!next) return "checked";
+
+      // Goes through applyOrderStatus so a return puts its stock back, exactly
+      // as it would if an admin had recorded it by hand.
+      await applyOrderStatus(shipment.orderId, next);
+      console.log(`Tracking sync moved order ${shipment.orderId} to ${next}`);
+      return "advanced";
     } catch (error) {
-      result.failed += 1;
       // One bad AWB must not stop the rest of the batch.
       console.error(`Tracking sync failed for AWB ${shipment.awb}:`, error);
       await prisma.shipment
         .update({ where: { id: shipment.id }, data: { lastSyncedAt: new Date() } })
         .catch(() => {});
+      return "failed";
+    }
+  };
+
+  for (let start = 0; start < shipments.length; start += CONCURRENCY) {
+    const outcomes = await Promise.all(shipments.slice(start, start + CONCURRENCY).map(syncOne));
+
+    for (const outcome of outcomes) {
+      result.checked += 1;
+      if (outcome === "advanced") result.advanced += 1;
+      if (outcome === "failed") result.failed += 1;
     }
   }
 
   return result;
 }
 
+/** Cooldown for person-triggered syncs. See TRACKING_SYNC_MIN_GAP_SEC in .env.example. */
 const MIN_GAP_MS = (Number(process.env.TRACKING_SYNC_MIN_GAP_SEC) || 300) * 1000;
 let lastRunAt = 0;
-let lastResult: SyncResult = { checked: 0, advanced: 0, failed: 0 };
 let inFlight: Promise<SyncResult> | null = null;
 
 export interface ThrottledSync extends SyncResult {
@@ -89,17 +108,20 @@ export interface ThrottledSync extends SyncResult {
  */
 export async function syncActiveShipmentsThrottled(): Promise<ThrottledSync> {
   const since = Date.now() - lastRunAt;
-  if (since < MIN_GAP_MS) return { ...lastResult, skipped: true };
+  // Zeroed rather than the last run's tally: nothing was checked or advanced by
+  // this call, and a caller reading `advanced` must not act on a stale count.
+  if (since < MIN_GAP_MS) return { checked: 0, advanced: 0, failed: 0, skipped: true };
   if (inFlight) return { ...(await inFlight), skipped: false };
 
   inFlight = syncActiveShipments();
 
   try {
-    lastResult = await inFlight;
-    lastRunAt = Date.now();
-    return { ...lastResult, skipped: false };
+    return { ...(await inFlight), skipped: false };
   } finally {
     inFlight = null;
+    // Stamped even when the run threw, or a failing courier would leave the
+    // cooldown open and let every page refresh start the batch again.
+    lastRunAt = Date.now();
   }
 }
 
