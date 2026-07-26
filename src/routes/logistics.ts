@@ -3,10 +3,13 @@ import crypto from "crypto";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
 import { sendDispatchNotice } from "../lib/notifications";
+import { nextOrderStatus } from "../lib/order-status";
+import { syncActiveShipments } from "../lib/tracking-sync";
 import { priceCart, quoteShipping } from "../lib/shipping";
 import { createTtlCache } from "../lib/parcel";
 import {
@@ -137,6 +140,44 @@ router.get("/pincode/:pincode", async (req, res) => {
   } catch (error) {
     console.error("Pincode lookup failed:", error);
     res.json({ city: null, state: null });
+  }
+});
+
+function cronKeyMatches(provided: string | undefined): boolean {
+  const expected = process.env.CRON_SECRET;
+  if (!expected || !provided || provided.length !== expected.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(provided), Buffer.from(expected));
+}
+
+/**
+ * Refreshes every in flight shipment and advances the orders the courier has
+ * moved on. Open to an admin from the dashboard, or to a scheduler holding the
+ * cron secret.
+ */
+router.post("/sync", async (req, res) => {
+  const byCron = cronKeyMatches(req.headers["x-cron-key"] as string | undefined);
+
+  if (!byCron) {
+    const header = req.headers.authorization;
+    if (!header?.startsWith("Bearer ")) {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+    try {
+      if (verifyToken(header.slice(7)).role !== "ADMIN") {
+        res.status(403).json({ error: "Admin access required" });
+        return;
+      }
+    } catch {
+      res.status(401).json({ error: "Unauthorized" });
+      return;
+    }
+  }
+
+  try {
+    res.json(await syncActiveShipments());
+  } catch (error) {
+    handleProviderError(res, error, "Could not refresh tracking");
   }
 });
 
@@ -562,11 +603,16 @@ router.post("/webhook", async (req, res) => {
       },
     });
 
-    const mapped = orderStatusFromCode(statusCode);
-    if (mapped) {
+    const order = await prisma.order.findUnique({
+      where: { id: shipment.orderId },
+      select: { status: true },
+    });
+
+    const next = order ? nextOrderStatus(order.status, orderStatusFromCode(statusCode)) : null;
+    if (next) {
       await prisma.order.update({
         where: { id: shipment.orderId },
-        data: { status: mapped as never },
+        data: { status: next as never },
       });
     }
   } catch (error) {
