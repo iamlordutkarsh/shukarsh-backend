@@ -18,6 +18,7 @@ enum OrderStatus {
   SHIPPED
   DELIVERED
   CANCELLED
+  RETURNED
 }
 
 enum PaymentStatus {
@@ -84,6 +85,11 @@ model Product {
   stock        Int      @default(0)
   images       String[]
   isActive     Boolean  @default(true)
+  weightKg     Decimal  @default(0.5) @db.Decimal(6, 3)
+  lengthCm     Int      @default(15)
+  breadthCm    Int      @default(12)
+  heightCm     Int      @default(6)
+  hsn          String?
   categoryId   String
   category     Category @relation(fields: [categoryId], references: [id])
   createdAt    DateTime @default(now())
@@ -122,16 +128,52 @@ model Order {
   userId            String?
   user              User?         @relation(fields: [userId], references: [id])
   email             String?
+  customerName      String?
+  customerPhone     String?
   status            OrderStatus   @default(PENDING)
   paymentStatus     PaymentStatus @default(PENDING)
+  itemsTotal        Decimal       @default(0) @db.Decimal(10, 2)
+  shippingAmount    Decimal       @default(0) @db.Decimal(10, 2)
   totalAmount       Decimal       @db.Decimal(10, 2)
+  courierId         Int?
+  courierName       String?
+  stockReleased     Boolean       @default(false)
   shippingAddress   Json?
   razorpayOrderId   String?       @unique
   razorpayPaymentId String?
   razorpaySignature String?
   items             OrderItem[]
+  shipment          Shipment?
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+}
+
+model Shipment {
+  id                 String    @id @default(uuid())
+  orderId            String    @unique
+  order              Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider           String    @default("shiprocket")
+  providerOrderId    String?
+  providerShipmentId String?
+  providerReference  String?
+  awb                String?
+  courierId          Int?
+  courierName        String?
+  labelUrl           String?
+  invoiceUrl         String?
+  manifestUrl        String?
+  trackingUrl        String?
+  status             String?
+  statusCode         Int?
+  appliedWeightKg    Decimal?  @db.Decimal(6, 3)
+  pickupScheduledAt  DateTime?
+  pickupToken        String?
+  events             Json?
+  lastSyncedAt       DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([awb])
 }
 
 model OrderItem {

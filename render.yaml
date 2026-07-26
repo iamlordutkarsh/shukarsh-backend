@@ -27,3 +27,15 @@ services:
         sync: false
       - key: SUPABASE_BUCKET
         value: product-images
+      - key: SHIPROCKET_EMAIL
+        sync: false
+      - key: SHIPROCKET_PASSWORD
+        sync: false
+      - key: SHIPROCKET_PICKUP_LOCATION
+        sync: false
+      - key: SHIPROCKET_PICKUP_PINCODE
+        sync: false
+      - key: SHIPROCKET_CHANNEL_ID
+        sync: false
+      - key: SHIPROCKET_WEBHOOK_TOKEN
+        generateValue: true

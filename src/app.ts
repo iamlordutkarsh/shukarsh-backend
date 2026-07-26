@@ -8,6 +8,7 @@ import orderRoutes from "./routes/orders";
 import newsletterRoutes from "./routes/newsletter";
 import uploadRoutes from "./routes/uploads";
 import wishlistRoutes from "./routes/wishlist";
+import logisticsRoutes from "./routes/logistics";
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use("/api/orders", orderRoutes);
 app.use("/api/newsletter", newsletterRoutes);
 app.use("/api/uploads", uploadRoutes);
 app.use("/api/wishlist", wishlistRoutes);
+app.use("/api/logistics", logisticsRoutes);
 
 app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });

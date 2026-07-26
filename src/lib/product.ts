@@ -8,6 +8,11 @@ export interface SerializedProduct {
   stock: number;
   images: string[];
   isActive: boolean;
+  weightKg: number;
+  lengthCm: number;
+  breadthCm: number;
+  heightCm: number;
+  hsn: string | null;
   categoryId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -19,6 +24,7 @@ export function serializeProduct(product: any): SerializedProduct {
     ...product,
     price: Number(product.price),
     comparePrice: product.comparePrice ? Number(product.comparePrice) : null,
+    weightKg: Number(product.weightKg),
   };
 }
 

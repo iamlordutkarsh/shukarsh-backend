@@ -15,6 +15,16 @@ const productSchema = z.object({
   stock: z.number().int().min(0).default(0),
   images: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
+  weightKg: z.number().positive().max(50).default(0.5),
+  lengthCm: z.number().int().positive().max(200).default(15),
+  breadthCm: z.number().int().positive().max(200).default(12),
+  heightCm: z.number().int().positive().max(200).default(6),
+  hsn: z
+    .string()
+    .trim()
+    .max(10)
+    .optional()
+    .transform((value) => value || null),
   categoryId: z.string().min(1),
 });
 
@@ -85,7 +95,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
 
   try {
     const product = await prisma.product.create({ data: result.data });
-    res.status(201).json({ product });
+    res.status(201).json({ product: serializeProduct(product) });
   } catch (error) {
     res.status(409).json({ error: "Slug already exists or invalid category" });
   }
@@ -105,7 +115,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       where: { id },
       data: result.data,
     });
-    res.json({ product });
+    res.json({ product: serializeProduct(product) });
   } catch (error) {
     res.status(404).json({ error: "Product not found" });
   }

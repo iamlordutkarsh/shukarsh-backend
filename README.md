@@ -10,6 +10,7 @@ Backend API for the Shukarsh e-commerce store.
 - Prisma ORM
 - PostgreSQL (Supabase)
 - Razorpay
+- Shiprocket
 
 ## Getting Started
 
@@ -78,3 +79,40 @@ The API will be available at `http://localhost:5000`.
 2. Get your test key id and key secret from the dashboard.
 3. Set `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` in your environment variables.
 4. Use Razorpay test cards for testing, e.g., `5267 3181 8797 5449`.
+
+### Shiprocket
+
+Shipping is optional. With no Shiprocket credentials set the store still takes
+orders and simply charges nothing for delivery, so you can launch before the
+courier account is approved.
+
+1. Add a pickup address under **Settings > Pickup Addresses** and note its
+   nickname and pincode.
+2. Create an API user under **Settings > API > Configure**. This is a separate
+   credential from your dashboard login.
+3. Set `SHIPROCKET_EMAIL`, `SHIPROCKET_PASSWORD`, `SHIPROCKET_PICKUP_LOCATION`
+   (the nickname, matched exactly) and `SHIPROCKET_PICKUP_PINCODE`.
+4. Generate a long random `SHIPROCKET_WEBHOOK_TOKEN`, then under
+   **Settings > API > Webhooks** point the status webhook at
+   `https://your-api-host/api/logistics/webhook` and paste the same token as the
+   `x-api-key` value.
+
+Auth tokens are cached for nine days and refreshed automatically on a 401, so
+normal traffic costs no extra login calls.
+
+#### Logistics endpoints
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| GET | `/api/logistics/config` | Public | Whether live shipping is on |
+| POST | `/api/logistics/rates` | Public | Courier options for a cart and pincode |
+| GET | `/api/logistics/pincode/:pincode` | Public | City and state autofill |
+| GET | `/api/logistics/pickup-locations` | Admin | Pickup nicknames as Shiprocket sees them |
+| GET | `/api/logistics/orders/:id/rates` | Admin | Courier options for a placed order |
+| POST | `/api/logistics/orders/:id/ship` | Admin | Create the shipment, assign an AWB, make the label |
+| POST | `/api/logistics/orders/:id/pickup` | Admin | Schedule a courier pickup |
+| POST | `/api/logistics/orders/:id/invoice` | Admin | Generate the invoice PDF |
+| POST | `/api/logistics/orders/:id/manifest` | Admin | Generate the manifest PDF |
+| POST | `/api/logistics/orders/:id/cancel-shipment` | Admin | Cancel an assigned AWB |
+| GET | `/api/logistics/orders/:id/track` | Owner or admin | Live tracking for one order |
+| POST | `/api/logistics/webhook` | Token | Courier status pushes |
