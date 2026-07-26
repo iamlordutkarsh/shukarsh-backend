@@ -32,7 +32,10 @@ export async function markOrderPaid(params: {
       where: { razorpayOrderId: params.razorpayOrderId, paymentStatus: { not: "PAID" } },
       data: {
         paymentStatus: "PAID",
-        status: order.status === "PENDING" ? "PROCESSING" : order.status,
+        // Payment does not advance the status. A paid order waits on Pending
+        // until the shop approves it, which is what the To approve queue in the
+        // admin panel is for. Moving it to Processing here skipped that queue
+        // entirely and no order ever appeared in it.
         razorpayPaymentId: params.razorpayPaymentId,
         ...(params.razorpaySignature ? { razorpaySignature: params.razorpaySignature } : {}),
       },
