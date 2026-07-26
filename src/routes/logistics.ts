@@ -45,6 +45,12 @@ function asJson(events: TrackingEvent[]): Prisma.InputJsonValue {
 }
 
 const shipSchema = z.object({ courierId: z.number().int().positive().optional() });
+
+const manualTrackingSchema = z.object({
+  awb: z.string().trim().min(3).max(40),
+  courierName: z.string().trim().max(60).optional(),
+  trackingUrl: z.string().trim().url().max(300).optional().or(z.literal("")),
+});
 const pickupSchema = z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional() });
 
 function handleProviderError(res: any, error: unknown, fallback: string) {
@@ -311,6 +317,71 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
   }
 });
 
+/**
+ * Records a tracking number the store got outside Shiprocket, so a parcel sent
+ * by India Post or handed to a local courier still shows the customer where it
+ * is. Marks the order shipped, since an AWB means it has left.
+ */
+router.patch("/orders/:id/tracking", authenticate, requireAdmin, async (req, res) => {
+  const parsed = manualTrackingSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? "Enter a valid tracking number" });
+    return;
+  }
+
+  const id = req.params.id as string;
+  const order = await prisma.order.findUnique({ where: { id }, include: { shipment: true } });
+
+  if (!order) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  if (order.shipment?.providerShipmentId) {
+    res.status(409).json({
+      error: "This order already has a Shiprocket shipment. Cancel it before entering tracking by hand.",
+    });
+    return;
+  }
+
+  const { awb, courierName, trackingUrl } = parsed.data;
+  const details = {
+    provider: "manual",
+    awb,
+    courierName: courierName || null,
+    trackingUrl: trackingUrl || null,
+    status: "SHIPPED",
+  };
+
+  try {
+    await prisma.shipment.upsert({
+      where: { orderId: id },
+      update: details,
+      create: { orderId: id, ...details },
+    });
+
+    const updated = await prisma.order.update({
+      where: { id },
+      data: {
+        status: order.status === "PENDING" || order.status === "PROCESSING" ? "SHIPPED" : order.status,
+        courierName: courierName || order.courierName,
+      },
+      include: {
+        user: { select: { email: true, firstName: true, lastName: true } },
+        shipment: true,
+        items: { include: { product: { select: { id: true, name: true, slug: true, images: true } } } },
+      },
+    });
+
+    void sendDispatchNotice(id);
+
+    res.json({ order: serializeOrder(updated) });
+  } catch (error) {
+    console.error("Manual tracking update failed:", error);
+    res.status(500).json({ error: "Could not save this tracking number" });
+  }
+});
+
 router.post("/orders/:id/pickup", authenticate, requireAdmin, async (req, res) => {
   const parsed = pickupSchema.safeParse(req.body ?? {});
   if (!parsed.success) {
@@ -404,6 +475,24 @@ router.get("/orders/:id/track", authenticate, async (req, res) => {
 
   if (!order.shipment?.awb) {
     res.json({ tracking: null });
+    return;
+  }
+
+  // A hand entered AWB belongs to a courier Shiprocket never saw, so there is
+  // nothing to poll. Hand back what we were told instead of erroring.
+  if (order.shipment.provider === "manual") {
+    res.json({
+      tracking: {
+        awb: order.shipment.awb,
+        courierName: order.shipment.courierName,
+        currentStatus: order.shipment.status,
+        statusCode: null,
+        trackUrl: order.shipment.trackingUrl,
+        etd: null,
+        deliveredAt: null,
+        events: [],
+      },
+    });
     return;
   }
 
