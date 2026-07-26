@@ -24,7 +24,14 @@ app.use(
     credentials: true,
   })
 );
-app.use(express.json());
+app.use(
+  express.json({
+    verify: (req, _res, buf) => {
+      // Webhook signatures cover the bytes as sent, not a re-serialized object.
+      (req as express.Request).rawBody = buf;
+    },
+  })
+);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString() });

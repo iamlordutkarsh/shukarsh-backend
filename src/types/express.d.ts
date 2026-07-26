@@ -8,6 +8,8 @@ declare global {
         email: string;
         role: UserRole;
       };
+      /** Set by the json body parser so webhook signatures can be checked. */
+      rawBody?: Buffer;
     }
   }
 }

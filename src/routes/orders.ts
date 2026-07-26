@@ -9,6 +9,8 @@ import { authenticate, requireAdmin } from "../middleware/auth";
 import { shippingAddressSchema } from "../lib/address";
 import { priceCart, resolveShipping } from "../lib/shipping";
 import { serializeOrder } from "../lib/order";
+import { markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
+import { sendOrderConfirmation } from "../lib/notifications";
 
 const router = Router();
 
@@ -172,45 +174,53 @@ router.post("/verify", async (req, res) => {
   }
 
   try {
-    const existing = await prisma.order.findUnique({
-      where: { razorpayOrderId },
-      include: { items: true },
-    });
+    const result = await markOrderPaid({ razorpayOrderId, razorpayPaymentId, razorpaySignature });
 
-    if (!existing) {
+    if (!result) {
       res.status(404).json({ error: "Order not found" });
       return;
     }
 
-    const alreadyPaid = existing.paymentStatus === "PAID";
+    if (!result.alreadyPaid) void sendOrderConfirmation(result.orderId);
 
-    const order = await prisma.$transaction(async (tx) => {
-      const updated = await tx.order.update({
-        where: { razorpayOrderId },
-        data: {
-          paymentStatus: "PAID",
-          status: existing.status === "PENDING" ? "PROCESSING" : existing.status,
-          razorpayPaymentId,
-          razorpaySignature,
-        },
-      });
-
-      if (!alreadyPaid) {
-        for (const item of existing.items) {
-          await tx.product.update({
-            where: { id: item.productId },
-            data: { stock: { decrement: item.quantity } },
-          });
-        }
-      }
-
-      return updated;
-    });
-
-    res.json({ message: "Payment verified", orderId: order.id });
+    res.json({ message: "Payment verified", orderId: result.orderId });
   } catch (error) {
     console.error("Payment verification error:", error);
     res.status(500).json({ error: "Could not confirm this payment" });
+  }
+});
+
+/**
+ * Razorpay's own confirmation. The browser callback above is the fast path, but
+ * it never fires if the customer closes the tab, so this is what stops a
+ * captured payment from leaving an order stuck on PENDING.
+ */
+router.post("/webhook", async (req, res) => {
+  if (!verifyWebhookSignature(req.rawBody, req.headers["x-razorpay-signature"] as string | undefined)) {
+    res.status(401).json({ error: "Unauthorized" });
+    return;
+  }
+
+  // Answer immediately so Razorpay does not retry a slow but successful call.
+  res.status(200).json({ received: true });
+
+  try {
+    const payment = paymentFromWebhook(req.body);
+    if (!payment) return;
+
+    const result = await markOrderPaid(payment);
+
+    if (!result) {
+      console.warn("Razorpay webhook for unknown order:", payment.razorpayOrderId);
+      return;
+    }
+
+    if (!result.alreadyPaid) {
+      console.log("Razorpay webhook confirmed payment the browser never reported:", result.orderId);
+      void sendOrderConfirmation(result.orderId);
+    }
+  } catch (error) {
+    console.error("Razorpay webhook processing failed:", error);
   }
 });
 
