@@ -9,7 +9,7 @@ import { authenticate, requireAdmin } from "../middleware/auth";
 import { shippingAddressSchema } from "../lib/address";
 import { priceCart, resolveShipping } from "../lib/shipping";
 import { serializeOrder } from "../lib/order";
-import { markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
+import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
 import { sendOrderConfirmation } from "../lib/notifications";
 
 const router = Router();
@@ -197,6 +197,12 @@ router.post("/verify", async (req, res) => {
  */
 router.post("/webhook", async (req, res) => {
   if (!verifyWebhookSignature(req.rawBody, req.headers["x-razorpay-signature"] as string | undefined)) {
+    // Both misconfigurations look identical from outside, so name them here.
+    console.warn(
+      isWebhookConfigured()
+        ? "Razorpay webhook rejected: signature mismatch. The secret in Razorpay does not match RAZORPAY_WEBHOOK_SECRET."
+        : "Razorpay webhook rejected: RAZORPAY_WEBHOOK_SECRET is not set, so every delivery will fail."
+    );
     res.status(401).json({ error: "Unauthorized" });
     return;
   }
@@ -206,7 +212,10 @@ router.post("/webhook", async (req, res) => {
 
   try {
     const payment = paymentFromWebhook(req.body);
-    if (!payment) return;
+    if (!payment) {
+      console.log("Razorpay webhook accepted, no action for event:", req.body?.event);
+      return;
+    }
 
     const result = await markOrderPaid(payment);
 
@@ -215,10 +224,13 @@ router.post("/webhook", async (req, res) => {
       return;
     }
 
-    if (!result.alreadyPaid) {
-      console.log("Razorpay webhook confirmed payment the browser never reported:", result.orderId);
-      void sendOrderConfirmation(result.orderId);
+    if (result.alreadyPaid) {
+      console.log("Razorpay webhook verified, order already confirmed by the browser:", result.orderId);
+      return;
     }
+
+    console.log("Razorpay webhook confirmed a payment the browser never reported:", result.orderId);
+    void sendOrderConfirmation(result.orderId);
   } catch (error) {
     console.error("Razorpay webhook processing failed:", error);
   }
