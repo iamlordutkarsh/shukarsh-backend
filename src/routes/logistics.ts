@@ -366,7 +366,7 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
 
     if (shipment.awb) void sendDispatchNotice(order.id);
 
-    res.json({ order: serializeOrder(updated) });
+    res.json({ order: serializeOrder(updated, { includeCost: true }) });
   } catch (error) {
     handleProviderError(res, error, "Could not create this shipment");
   }
@@ -440,7 +440,7 @@ router.patch("/orders/:id/tracking", authenticate, requireAdmin, async (req, res
 
     if (isNewAwb) void sendDispatchNotice(id);
 
-    res.json({ order: serializeOrder(updated) });
+    res.json({ order: serializeOrder(updated, { includeCost: true }) });
   } catch (error) {
     console.error("Manual tracking update failed:", error);
     res.status(500).json({ error: "Could not save this tracking number" });

@@ -1,4 +1,12 @@
-export function serializeOrder(order: any) {
+/**
+ * Turns an order row into something safe to send out.
+ *
+ * Customers read their own orders through the same endpoints the admin panel
+ * uses, so what a line item costs us has to be dropped unless the caller is an
+ * admin. Like serializeProduct, cost is opt-in rather than opt-out: forgetting
+ * the flag shows a customer too little, not too much.
+ */
+export function serializeOrder(order: any, options?: { includeCost?: boolean }) {
   const { user, shipment, ...rest } = order;
 
   return {
@@ -14,13 +22,20 @@ export function serializeOrder(order: any) {
     customerEmail: order.email ?? user?.email ?? null,
     customerName:
       order.customerName ?? ([user?.firstName, user?.lastName].filter(Boolean).join(" ") || null),
-    items: (order.items ?? []).map((item: any) => ({
-      ...item,
-      price: Number(item.price),
-      gstRate: Number(item.gstRate ?? 0),
-      taxableAmount: Number(item.taxableAmount ?? 0),
-      taxAmount: Number(item.taxAmount ?? 0),
-    })),
+    items: (order.items ?? []).map((item: any) => {
+      const { costPrice, ...line } = item;
+
+      return {
+        ...line,
+        price: Number(item.price),
+        gstRate: Number(item.gstRate ?? 0),
+        taxableAmount: Number(item.taxableAmount ?? 0),
+        taxAmount: Number(item.taxAmount ?? 0),
+        ...(options?.includeCost
+          ? { costPrice: costPrice != null ? Number(costPrice) : null }
+          : {}),
+      };
+    }),
     shipment: shipment
       ? {
           ...shipment,

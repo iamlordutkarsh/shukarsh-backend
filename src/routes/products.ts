@@ -3,7 +3,7 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { serializeProduct, serializeProducts } from "../lib/product";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
-import { authenticate, requireAdmin } from "../middleware/auth";
+import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
 
 const router = Router();
 
@@ -35,6 +35,8 @@ const productSchema = z.object({
       message: `GST rate must be one of ${GST_RATES.join(", ")}`,
     })
     .optional(),
+  // Net of GST: input tax credit means the tax paid to a supplier is not a cost.
+  costPrice: z.number().min(0).nullable().optional(),
   categoryId: z.string().min(1),
 });
 
@@ -77,7 +79,9 @@ router.get("/", async (req, res) => {
   ]);
 
   res.json({
-    products: serializeProducts(products),
+    // The admin catalogue reads this same endpoint, so cost comes back for an
+    // admin and is dropped for everyone else.
+    products: serializeProducts(products, { includeCost: isAdminRequest(req) }),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
@@ -93,7 +97,7 @@ router.get("/:slug", async (req, res) => {
     return;
   }
 
-  res.json({ product: serializeProduct(product) });
+  res.json({ product: serializeProduct(product, { includeCost: isAdminRequest(req) }) });
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {
@@ -107,7 +111,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
     const product = await prisma.product.create({
       data: { ...result.data, gstRate: result.data.gstRate ?? defaultGstRate() },
     });
-    res.status(201).json({ product: serializeProduct(product) });
+    res.status(201).json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
     res.status(409).json({ error: "Slug already exists or invalid category" });
   }
@@ -127,7 +131,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       where: { id },
       data: result.data,
     });
-    res.json({ product: serializeProduct(product) });
+    res.json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
     res.status(404).json({ error: "Product not found" });
   }

@@ -212,6 +212,9 @@ router.post("/create", async (req, res) => {
             gstRate: line.gstRate,
             taxableAmount: tax.lines[index]?.taxable ?? line.gross,
             taxAmount: tax.lines[index]?.tax ?? 0,
+            // Snapshotted for the same reason as the rate: renegotiating with a
+            // supplier must not rewrite the profit on orders already shipped.
+            costPrice: line.costPrice,
           })),
         },
       },
@@ -345,7 +348,10 @@ router.get("/", authenticate, async (req, res) => {
     include: orderInclude,
   });
 
-  res.json({ orders: orders.map(serializeOrder) });
+  // Wrapped rather than passed straight to map, or the array index would land
+  // in the options slot.
+  const includeCost = req.user!.role === "ADMIN";
+  res.json({ orders: orders.map((order) => serializeOrder(order, { includeCost })) });
 });
 
 router.get("/:id", authenticate, async (req, res) => {
@@ -359,7 +365,7 @@ router.get("/:id", authenticate, async (req, res) => {
     return;
   }
 
-  res.json({ order: serializeOrder(order) });
+  res.json({ order: serializeOrder(order, { includeCost: req.user!.role === "ADMIN" }) });
 });
 
 /**
@@ -414,7 +420,7 @@ router.patch("/:id/status", authenticate, requireAdmin, async (req, res) => {
     }
 
     const order = await prisma.order.findUnique({ where: { id }, include: orderInclude });
-    res.json({ order: serializeOrder(order!) });
+    res.json({ order: serializeOrder(order!, { includeCost: true }) });
   } catch (error) {
     if (error instanceof InsufficientStockError) {
       res.status(409).json({

@@ -26,6 +26,8 @@ export interface PricedLine {
   hsn: string | null;
   gstRate: number;
   categoryId: string;
+  /** Per unit and net of GST. Null when nobody has recorded one. */
+  costPrice: number | null;
   /** price × quantity, GST included, since the listed price is the MRP. */
   gross: number;
 }
@@ -50,6 +52,7 @@ export async function priceCart(items: CartLine[]): Promise<PricedCart> {
       hsn: true,
       gstRate: true,
       categoryId: true,
+      costPrice: true,
       weightKg: true,
       lengthCm: true,
       breadthCm: true,
@@ -79,6 +82,7 @@ export async function priceCart(items: CartLine[]): Promise<PricedCart> {
       hsn: product.hsn,
       gstRate: Number(product.gstRate),
       categoryId: product.categoryId,
+      costPrice: product.costPrice != null ? Number(product.costPrice) : null,
       gross: round2(Number(product.price) * item.quantity),
     });
 
