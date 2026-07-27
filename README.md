@@ -60,11 +60,21 @@ The API will be available at `http://localhost:5000`.
 
 ### Schema changes
 
-Migrations live in `prisma/migrations` and are committed. Render runs
-`prisma migrate deploy` as the last step of its build, so a deploy applies any
-new migration before the new code serves traffic. Never use `prisma db push`
-against production: it changes the database without recording a migration, and
-the next deploy will not know what has already been applied.
+Migrations live in `prisma/migrations` and are committed. `prisma migrate deploy`
+runs from the `prestart` script, so it happens on the way up no matter how the
+host's build command is configured. That is deliberate: `render.yaml` also puts
+it in `buildCommand`, but a service set up by hand in the Render dashboard does
+not use the blueprint, and the schema silently not migrating is how you end up
+with new code live against an old database. Running it twice costs nothing,
+because applying an already-applied migration is a no-op.
+
+A failed migration therefore stops the server from starting. That is the point:
+refusing to boot is easier to spot and to fix than booting and throwing P2022 on
+every request that touches the changed table.
+
+Never use `prisma db push` against production: it changes the database without
+recording a migration, and the next deploy will not know what has already been
+applied.
 
 To change the schema, edit `prisma/schema.prisma`, then:
 
