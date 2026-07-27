@@ -52,17 +52,53 @@ function itemRows(items: { quantity: number; price: unknown; product: { name: st
     .join("");
 }
 
-function totalsRows(order: { itemsTotal: unknown; shippingAmount: unknown; totalAmount: unknown }): string {
+function totalsRows(order: {
+  itemsTotal: unknown;
+  shippingAmount: unknown;
+  totalAmount: unknown;
+  discountTotal?: unknown;
+  couponCode?: string | null;
+  taxTotal?: unknown;
+  cgstTotal?: unknown;
+  sgstTotal?: unknown;
+  igstTotal?: unknown;
+}): string {
   const shipping = Number(order.shippingAmount ?? 0);
+  const tax = Number(order.taxTotal ?? 0);
+  const cgst = Number(order.cgstTotal ?? 0);
+  const sgst = Number(order.sgstTotal ?? 0);
+  const igst = Number(order.igstTotal ?? 0);
+
+  // Prices are MRP, so GST sits under the total as a disclosure rather than
+  // above it as a charge.
+  const taxRow =
+    tax > 0
+      ? `<tr><td colspan="2" style="padding:6px 0 0;font-size:12px;color:#9a94ad">
+           Includes GST ${money(tax)}${
+             igst > 0 ? ` (IGST)` : cgst > 0 ? ` (CGST ${money(cgst)} + SGST ${money(sgst)})` : ""
+           }
+         </td></tr>`
+      : "";
+
+  const discount = Number(order.discountTotal ?? 0);
+  const discountRow =
+    discount > 0
+      ? `<tr><td style="padding:4px 0;font-size:14px;color:#3fb98f">Discount${
+          order.couponCode ? ` (${escapeHtml(order.couponCode)})` : ""
+        }</td>
+          <td style="padding:4px 0;font-size:14px;text-align:right;color:#3fb98f">−${money(discount)}</td></tr>`
+      : "";
 
   return `<tr><td style="padding:10px 0 0;font-size:14px;color:#6b6480;border-top:1px solid #eee8ff">Items</td>
       <td style="padding:10px 0 0;font-size:14px;text-align:right;border-top:1px solid #eee8ff">${money(order.itemsTotal)}</td></tr>
+    ${discountRow}
     <tr><td style="padding:4px 0;font-size:14px;color:#6b6480">Shipping</td>
       <td style="padding:4px 0;font-size:14px;text-align:right">${shipping > 0 ? money(shipping) : "Free"}</td></tr>
     <tr><td style="padding:10px 0 0;font-size:16px;font-weight:700;border-top:1px solid #eee8ff">Total</td>
       <td style="padding:10px 0 0;font-size:16px;text-align:right;font-weight:700;border-top:1px solid #eee8ff">${money(
         order.totalAmount
-      )}</td></tr>`;
+      )}</td></tr>
+    ${taxRow}`;
 }
 
 async function loadOrder(orderId: string) {

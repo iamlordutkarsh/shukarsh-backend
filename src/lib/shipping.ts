@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { computeParcel, createTtlCache, weightBucket, type Parcel } from "./parcel";
+import { round2 } from "./tax";
 import {
   getServiceability,
   isShiprocketConfigured,
@@ -23,6 +24,10 @@ export interface PricedLine {
   quantity: number;
   price: number;
   hsn: string | null;
+  gstRate: number;
+  categoryId: string;
+  /** price × quantity, GST included, since the listed price is the MRP. */
+  gross: number;
 }
 
 export interface PricedCart {
@@ -43,6 +48,8 @@ export async function priceCart(items: CartLine[]): Promise<PricedCart> {
       price: true,
       stock: true,
       hsn: true,
+      gstRate: true,
+      categoryId: true,
       weightKg: true,
       lengthCm: true,
       breadthCm: true,
@@ -70,6 +77,9 @@ export async function priceCart(items: CartLine[]): Promise<PricedCart> {
       quantity: item.quantity,
       price: Number(product.price),
       hsn: product.hsn,
+      gstRate: Number(product.gstRate),
+      categoryId: product.categoryId,
+      gross: round2(Number(product.price) * item.quantity),
     });
 
     parcelItems.push({
@@ -81,7 +91,7 @@ export async function priceCart(items: CartLine[]): Promise<PricedCart> {
     });
   }
 
-  const itemsTotal = lines.reduce((total, line) => total + line.price * line.quantity, 0);
+  const itemsTotal = round2(lines.reduce((total, line) => total + line.gross, 0));
 
   return { lines, itemsTotal, parcel: computeParcel(parcelItems) };
 }

@@ -272,6 +272,9 @@ export async function createAdhocOrder(payload: CreateOrderPayload): Promise<Cre
       units: item.units,
       selling_price: Math.round(item.sellingPrice),
       discount: 0,
+      // selling_price is our MRP and already has GST inside it. Shiprocket adds
+      // `tax` on top when it prints the invoice, so anything but 0 here bills
+      // the customer's GST to them a second time.
       tax: 0,
       ...(item.hsn ? { hsn: Number(item.hsn) } : {}),
     })),

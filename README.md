@@ -112,6 +112,67 @@ Both paths converge on the same conditional update, so whichever arrives second
 sees the order already paid and skips the stock decrement rather than running it
 twice.
 
+### GST
+
+Listed prices are the MRP: the tax is already inside them. Nothing here changes
+what a customer is charged, it decides how the tax already in the total gets
+reported on the order, the receipt and the invoice.
+
+`SELLER_STATE` is what splits CGST+SGST (buyer in your state) from IGST (buyer
+anywhere else), so GST stays switched off until you set it. That is the right
+setting until you have a GSTIN, because charging GST without one is not legal.
+
+Each product carries its own `gstRate`, picked from the real slabs (0, 0.25, 3,
+5, 12, 18, 28). New products fall back to `GST_DEFAULT_RATE`. Delivery is part
+of a composite supply, so it is taxed at the rate of the highest-value item in
+the order unless you set `GST_ON_SHIPPING=false`.
+
+Every order stores its own tax breakdown and the rate that applied to each line
+at the time. Slabs change and customers move house, and neither should be able
+to rewrite an invoice that has already gone out. `placeOfSupply` is kept for the
+same reason: GSTR-1 is filed state-wise.
+
+`POST /api/orders/quote` prices a bag without writing anything down. The
+checkout page uses it so the GST it shows comes from the same code that charges
+the card.
+
+Shiprocket is sent `tax: 0` on every line on purpose. Our `selling_price` is
+already inclusive, and Shiprocket adds `tax` on top when it prints an invoice,
+so any other value bills the customer's GST to them twice.
+
+### Coupons
+
+Managed under **Admin > Coupons**. Three kinds: a percent off (optionally
+capped), a flat amount off, or free shipping. Each code can carry a minimum
+spend, a total usage limit, a per-customer limit, a live window, and a
+first-order-only flag.
+
+Leave a code's categories empty and it covers the whole catalogue. Attach
+categories or products and only those lines are discounted, so "25% off
+dresses" leaves the rest of the bag alone. The minimum spend is then measured
+against the covered lines rather than the whole bag, which is the reading a
+customer expects.
+
+A discount is split across the lines it covers in proportion to what each is
+worth. That is not cosmetic: GST is charged per line at that line's own rate, so
+which lines the money comes off changes what is owed. The discount is applied
+before tax is worked out, because GST is due on what the customer actually pays.
+
+Redemptions are booked when an order is confirmed, not when it is placed, so an
+abandoned checkout costs a limited code nothing. The count is incremented
+unconditionally at that point: by then the money has been taken, and refusing to
+record it would leave a discount charged but unaccounted for. Limits are
+enforced where they can still be honoured, when the code is applied and again
+before payment starts, so a busy limited code can overshoot its cap by a use or
+two under concurrent checkouts.
+
+Deleting a code that has been used switches it off instead. Redemptions are what
+evidences an order's discount, and deleting the coupon would cascade them away.
+
+`POST /api/coupons/apply` checks a code against a real bag and is what the
+checkout page calls. It runs the whole quote rather than reading the coupon on
+its own, so the figure it reports is the figure that will be charged.
+
 ### Email
 
 Order confirmations and dispatch notices go out through

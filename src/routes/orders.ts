@@ -6,8 +6,8 @@ import { OrderStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
-import { shippingAddressSchema } from "../lib/address";
-import { priceCart, resolveShipping } from "../lib/shipping";
+import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
+import { buildQuote, serializeQuote } from "../lib/quote";
 import { serializeOrder } from "../lib/order";
 import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
 import { InsufficientStockError, applyOrderStatus } from "../lib/order-status";
@@ -34,6 +34,21 @@ const createOrderSchema = z.object({
   shippingAddress: shippingAddressSchema,
   email: z.string().email(),
   courierId: z.number().int().positive().optional(),
+  couponCode: z.string().trim().max(40).optional(),
+});
+
+const quoteSchema = z.object({
+  items: z.array(
+    z.object({
+      productId: z.string().min(1),
+      quantity: z.number().int().positive().max(20),
+    })
+  ).min(1),
+  pincode: pincodeSchema.optional(),
+  state: z.string().trim().min(2).optional(),
+  courierId: z.number().int().positive().optional(),
+  couponCode: z.string().trim().max(40).optional(),
+  email: z.string().email().optional(),
 });
 
 const verifyPaymentSchema = z.object({
@@ -54,6 +69,65 @@ const orderInclude = {
   },
 } as const;
 
+/**
+ * Who is asking, when signing in is optional.
+ *
+ * Both quoting and placing an order work for guests, but a signed-in customer
+ * has to be recognised or per-customer coupon limits would count against the
+ * wrong person.
+ */
+function optionalUserId(req: { headers: { authorization?: string } }): string | undefined {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) return undefined;
+
+  try {
+    return verifyToken(header.slice(7)).id;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * What this bag would cost, worked out server-side.
+ *
+ * The checkout page needs the GST figure before an order exists, and every
+ * number here has to come from the same code that /create will charge. Nothing
+ * is written down and no payment is started.
+ */
+router.post("/quote", async (req, res) => {
+  const result = quoteSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
+    return;
+  }
+
+  const { items, pincode, state, courierId, couponCode, email } = result.data;
+
+  try {
+    const quote = await buildQuote({
+      items,
+      pincode,
+      // An unknown state just means we cannot tell intra from inter-state yet.
+      state: state ? canonicalState(state) : null,
+      courierId,
+      couponCode,
+      userId: optionalUserId(req),
+      email,
+    });
+
+    res.json(serializeQuote(quote));
+  } catch (error) {
+    const statusCode = (error as { statusCode?: number }).statusCode;
+    if (statusCode) {
+      res.status(statusCode).json({ error: (error as Error).message });
+      return;
+    }
+
+    console.error("Quote failed:", error);
+    res.status(500).json({ error: "Could not price this bag" });
+  }
+});
+
 router.post("/create", async (req, res) => {
   const result = createOrderSchema.safeParse(req.body);
   if (!result.success) {
@@ -61,36 +135,37 @@ router.post("/create", async (req, res) => {
     return;
   }
 
-  const { items, shippingAddress, email, courierId } = result.data;
-
-  const token = req.headers.authorization?.startsWith("Bearer ")
-    ? req.headers.authorization.slice(7)
-    : null;
-
-  let userId: string | undefined;
-  if (token) {
-    try {
-      userId = verifyToken(token).id;
-    } catch {
-      userId = undefined;
-    }
-  }
+  const { items, shippingAddress, email, courierId, couponCode } = result.data;
+  const userId = optionalUserId(req);
 
   try {
-    const cart = await priceCart(items);
+    // Prices are MRP, so the tax this returns is already inside totalAmount
+    // rather than added on top. The customer pays the same either way.
+    const quote = await buildQuote({
+      items,
+      pincode: shippingAddress.zip,
+      state: shippingAddress.state,
+      courierId,
+      couponCode,
+      userId,
+      email,
+    });
+
+    const { cart, shipping, tax, coupon, totalAmount } = quote;
+
     if (cart.itemsTotal <= 0) {
       res.status(400).json({ error: "Cart total must be greater than zero" });
       return;
     }
 
-    const shipping = await resolveShipping({
-      pincode: shippingAddress.zip,
-      parcel: cart.parcel,
-      declaredValue: cart.itemsTotal,
-      preferredCourierId: courierId,
-    });
+    // A code can expire or run out between the checkout page pricing it and the
+    // customer pressing pay. Refusing here is better than quietly charging more
+    // than the page last showed them.
+    if (couponCode && quote.couponError) {
+      res.status(409).json({ error: quote.couponError, couponRejected: true });
+      return;
+    }
 
-    const totalAmount = cart.itemsTotal + shipping.amount;
     const razorpay = getRazorpay();
     const amountInPaise = Math.round(totalAmount * 100);
 
@@ -109,7 +184,15 @@ router.post("/create", async (req, res) => {
       data: {
         itemsTotal: cart.itemsTotal,
         shippingAmount: shipping.amount,
+        discountTotal: quote.discountTotal,
+        couponId: coupon?.couponId ?? null,
+        couponCode: coupon?.code ?? null,
         totalAmount,
+        taxTotal: tax.taxTotal,
+        cgstTotal: tax.cgstTotal,
+        sgstTotal: tax.sgstTotal,
+        igstTotal: tax.igstTotal,
+        placeOfSupply: tax.placeOfSupply,
         courierId: shipping.courierId,
         courierName: shipping.courierName,
         shippingAddress,
@@ -119,10 +202,16 @@ router.post("/create", async (req, res) => {
         razorpayOrderId: razorpayOrder.id,
         userId,
         items: {
-          create: cart.lines.map((line) => ({
+          // Indexed by position, not product id: computeTax maps over the lines
+          // it was given, so index i lines up even if a cart somehow carries the
+          // same product twice.
+          create: cart.lines.map((line, index) => ({
             productId: line.productId,
             quantity: line.quantity,
             price: line.price,
+            gstRate: line.gstRate,
+            taxableAmount: tax.lines[index]?.taxable ?? line.gross,
+            taxAmount: tax.lines[index]?.tax ?? 0,
           })),
         },
       },
@@ -135,9 +224,19 @@ router.post("/create", async (req, res) => {
       currency: "INR",
       keyId: process.env.RAZORPAY_KEY_ID,
       itemsTotal: cart.itemsTotal,
+      discountTotal: quote.discountTotal,
       shippingAmount: shipping.amount,
       totalAmount,
       courierName: shipping.courierName,
+      coupon: coupon ? { code: coupon.code, discount: coupon.discount, freeShipping: coupon.freeShipping } : null,
+      tax: {
+        enabled: tax.enabled,
+        total: tax.taxTotal,
+        cgst: tax.cgstTotal,
+        sgst: tax.sgstTotal,
+        igst: tax.igstTotal,
+        intraState: tax.intraState,
+      },
     });
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode;

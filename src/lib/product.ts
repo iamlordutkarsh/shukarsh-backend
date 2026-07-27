@@ -13,6 +13,7 @@ export interface SerializedProduct {
   breadthCm: number;
   heightCm: number;
   hsn: string | null;
+  gstRate: number;
   categoryId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -25,6 +26,7 @@ export function serializeProduct(product: any): SerializedProduct {
     price: Number(product.price),
     comparePrice: product.comparePrice ? Number(product.comparePrice) : null,
     weightKg: Number(product.weightKg),
+    gstRate: Number(product.gstRate ?? 0),
   };
 }
 

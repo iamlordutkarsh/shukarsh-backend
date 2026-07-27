@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { serializeProduct, serializeProducts } from "../lib/product";
+import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, requireAdmin } from "../middleware/auth";
 
 const router = Router();
@@ -25,6 +26,15 @@ const productSchema = z.object({
     .max(10)
     .optional()
     .transform((value) => value || null),
+  // Left optional so the create handler can fall back to GST_DEFAULT_RATE at
+  // request time. A zod .default() would read the env at import, which happens
+  // before dotenv has run.
+  gstRate: z
+    .number()
+    .refine((value) => GST_RATES.includes(value as (typeof GST_RATES)[number]), {
+      message: `GST rate must be one of ${GST_RATES.join(", ")}`,
+    })
+    .optional(),
   categoryId: z.string().min(1),
 });
 
@@ -94,7 +104,9 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   }
 
   try {
-    const product = await prisma.product.create({ data: result.data });
+    const product = await prisma.product.create({
+      data: { ...result.data, gstRate: result.data.gstRate ?? defaultGstRate() },
+    });
     res.status(201).json({ product: serializeProduct(product) });
   } catch (error) {
     res.status(409).json({ error: "Slug already exists or invalid category" });

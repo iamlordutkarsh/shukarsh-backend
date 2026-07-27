@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { prisma } from "./prisma";
+import { recordRedemption } from "./coupon";
 
 export interface PaidResult {
   orderId: string;
@@ -49,6 +50,18 @@ export async function markOrderPaid(params: {
       await tx.product.update({
         where: { id: item.productId },
         data: { stock: { decrement: item.quantity } },
+      });
+    }
+
+    // Inside the same claim as the stock, so whichever of the browser callback
+    // and the webhook loses the race books neither.
+    if (order.couponId) {
+      await recordRedemption(tx, {
+        couponId: order.couponId,
+        orderId: order.id,
+        userId: order.userId,
+        email: order.email,
+        amount: Number(order.discountTotal),
       });
     }
 
