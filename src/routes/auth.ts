@@ -78,6 +78,45 @@ router.post("/login", loginLimiter, async (req, res) => {
   });
 });
 
+const changePasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(6),
+});
+
+/**
+ * Rate limited with the sign in bucket, since proving the current password is
+ * the same guessing game as signing in, just behind a token.
+ */
+router.post("/change-password", authenticate, loginLimiter, async (req, res) => {
+  const result = changePasswordSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Your new password needs at least 6 characters" });
+    return;
+  }
+
+  const { currentPassword, newPassword } = result.data;
+
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
+  if (!user) {
+    res.status(404).json({ error: "User not found" });
+    return;
+  }
+
+  if (!verifyPassword(currentPassword, user.password)) {
+    res.status(401).json({ error: "That is not your current password" });
+    return;
+  }
+
+  if (verifyPassword(newPassword, user.password)) {
+    res.status(400).json({ error: "Your new password is the same as the old one" });
+    return;
+  }
+
+  await prisma.user.update({ where: { id: user.id }, data: { password: hashPassword(newPassword) } });
+
+  res.json({ message: "Password changed" });
+});
+
 router.get("/me", authenticate, async (req, res) => {
   const user = await prisma.user.findUnique({
     where: { id: req.user!.id },
