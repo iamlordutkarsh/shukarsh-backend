@@ -263,6 +263,41 @@ router.get("/:id", authenticate, async (req, res) => {
   res.json({ order: serializeOrder(order) });
 });
 
+/**
+ * Lets the customer call an order off themselves, but only while it is still
+ * waiting to be approved. Once the shop moves it to Processing someone is
+ * packing it, and from there a cancellation has to go through them.
+ */
+router.post("/:id/cancel", authenticate, async (req, res) => {
+  const id = req.params.id as string;
+  const order = await prisma.order.findUnique({ where: { id }, select: { userId: true, status: true } });
+
+  // Same shape as the fetch above: an order that is not yours does not exist.
+  if (!order || order.userId !== req.user!.id) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  if (order.status !== "PENDING") {
+    res.status(409).json({
+      error:
+        order.status === "CANCELLED"
+          ? "This order is already cancelled."
+          : "This order has already been approved, so it can no longer be cancelled here. Please contact us.",
+    });
+    return;
+  }
+
+  try {
+    await applyOrderStatus(id, "CANCELLED");
+    const updated = await prisma.order.findUnique({ where: { id }, include: orderInclude });
+    res.json({ order: serializeOrder(updated!) });
+  } catch (error) {
+    console.error("Customer order cancellation failed:", error);
+    res.status(500).json({ error: "Could not cancel this order" });
+  }
+});
+
 router.patch("/:id/status", authenticate, requireAdmin, async (req, res) => {
   const result = statusSchema.safeParse(req.body);
   if (!result.success) {
