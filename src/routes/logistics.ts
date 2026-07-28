@@ -6,6 +6,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
+import { expireAbandonedOrders } from "../lib/abandoned-orders";
 import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
@@ -189,7 +190,16 @@ router.post("/sync", adminOrCron, async (_req, res) => {
   try {
     // A scheduler runs on its own clock and should always do the work. Anything
     // a person can click gets the cooldown.
-    res.json(byCron ? { ...(await syncActiveShipments()), skipped: false } : await syncActiveShipmentsThrottled());
+    const tracking = byCron
+      ? { ...(await syncActiveShipments()), skipped: false }
+      : await syncActiveShipmentsThrottled();
+
+    // Abandoned checkouts are swept on the same tick, because a scheduler is the
+    // only clock a host that sleeps actually has. Not on the admin's button:
+    // cancelling orders is not what Refresh tracking says it does.
+    const expiredOrders = byCron ? await expireAbandonedOrders() : 0;
+
+    res.json({ ...tracking, expiredOrders });
   } catch (error) {
     handleProviderError(res, error, "Could not refresh tracking");
   }

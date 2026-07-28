@@ -176,8 +176,13 @@ record it would leave a discount charged but unaccounted for.
 The per-customer limit counts orders that are still awaiting payment as well as
 recorded redemptions. Without that, five unpaid checkouts each carrying a
 one-per-person code can all be paid afterwards and the code has been used five
-times. The price of closing that is that an abandoned checkout holds that
-customer's use of the code until the order is cancelled.
+times.
+
+So that an abandoned checkout does not sit on the customer's one use forever, an
+unpaid order is cancelled after `ABANDONED_ORDER_HOURS` (24 by default) and a
+cancelled order lets go of its code. That sweep runs hourly in process and again
+on `POST /api/logistics/sync`, which is the clock a host that sleeps actually
+has. Only orders Razorpay never named a payment against are touched.
 
 `usageLimit` is enforced where it can still be honoured, when the code is applied
 and again before payment starts, so a busy limited code can overshoot its cap by

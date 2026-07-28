@@ -28,11 +28,19 @@ export async function markOrderPaid(params: {
 
   if (!order) return null;
 
+  // A Razorpay link stays open after we have closed the order, so money can
+  // still arrive for one the customer called off or the abandoned-checkout sweep
+  // expired. It has to go on record, but the shelf must be left alone: nobody is
+  // going to ship this. stockReleased says the units are not held, so an admin
+  // reopening the order takes them properly.
+  const cancelled = order.status === "CANCELLED" || order.status === "RETURNED";
+
   return prisma.$transaction(async (tx) => {
     const claim = await tx.order.updateMany({
       where: { razorpayOrderId: params.razorpayOrderId, paymentStatus: { not: "PAID" } },
       data: {
         paymentStatus: "PAID",
+        ...(cancelled ? { stockReleased: true } : {}),
         // Payment does not advance the status. A paid order waits on Pending
         // until the shop approves it, which is what the To approve queue in the
         // admin panel is for. Moving it to Processing here skipped that queue
@@ -46,11 +54,17 @@ export async function markOrderPaid(params: {
       return { orderId: order.id, alreadyPaid: true };
     }
 
-    for (const item of order.items) {
-      await tx.product.update({
-        where: { id: item.productId },
-        data: { stock: { decrement: item.quantity } },
-      });
+    if (cancelled) {
+      console.warn(
+        `Payment ${params.razorpayPaymentId} arrived for cancelled order ${order.id}. Recorded, no stock taken; this one needs a refund decision.`
+      );
+    } else {
+      for (const item of order.items) {
+        await tx.product.update({
+          where: { id: item.productId },
+          data: { stock: { decrement: item.quantity } },
+        });
+      }
     }
 
     // Inside the same claim as the stock, so whichever of the browser callback

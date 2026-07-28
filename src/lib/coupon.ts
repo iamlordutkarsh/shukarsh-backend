@@ -121,9 +121,14 @@ async function redemptionCount(
   // once the money arrives, so counting redemptions alone lets someone run
   // checkout five times, sit on five PENDING orders each carrying the code, and
   // then pay all five. No race needed and no limit reached.
+  //
+  // A cancelled one lets go of the code again, which is what stops an abandoned
+  // checkout locking a customer out of it: see expireAbandonedOrders.
   const [redeemed, held] = await Promise.all([
     prisma.couponRedemption.count({ where: { couponId, ...identity } }),
-    prisma.order.count({ where: { couponId, ...identity, paymentStatus: "PENDING" } }),
+    prisma.order.count({
+      where: { couponId, ...identity, paymentStatus: "PENDING", status: { not: "CANCELLED" } },
+    }),
   ]);
 
   return redeemed + held;
