@@ -12,7 +12,7 @@ import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
 import { pickCourier, priceCart, quoteShipping } from "../lib/shipping";
 import { freeDeliveryShortfall, shippingFee, shippingPolicy } from "../lib/shipping-policy";
-import { createTtlCache } from "../lib/parcel";
+import { createTtlCache, type Parcel } from "../lib/parcel";
 import {
   ShiprocketError,
   assignAwb,
@@ -247,6 +247,25 @@ async function loadOrderForShipping(id: string) {
   });
 }
 
+/**
+ * The courier we would book for this parcel today. Undefined when we cannot ask,
+ * which hands the choice back to Shiprocket rather than holding up a dispatch
+ * over it. Quotes are cached per pincode and weight, so this rarely costs a call.
+ */
+async function preferredCourier(
+  pincode: string,
+  parcel: Parcel,
+  declaredValue: number
+): Promise<number | undefined> {
+  try {
+    const { options } = await quoteShipping({ pincode, parcel, declaredValue });
+    return options.length > 0 ? pickCourier(options).courierId : undefined;
+  } catch (error) {
+    console.error("Could not choose a courier, letting Shiprocket assign one:", error);
+    return undefined;
+  }
+}
+
 router.get("/orders/:id/rates", authenticate, requireAdmin, async (req, res) => {
   const order = await loadOrderForShipping(req.params.id as string);
   if (!order) {
@@ -378,7 +397,16 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
     }
 
     if (!shipment.awb) {
-      const awb = await assignAwb(shipment.providerShipmentId!, parsed.data.courierId ?? order.courierId ?? undefined);
+      // An admin's pick wins, then whatever the order was placed with, and
+      // failing both we choose. Left undefined, Shiprocket assigns its own
+      // recommendation, which is the expensive one: picking the cheapest courier
+      // only saves anything if the choice reaches the AWB.
+      const courierId =
+        parsed.data.courierId ??
+        order.courierId ??
+        (await preferredCourier(address.zip, cart.parcel, Number(order.itemsTotal || order.totalAmount)));
+
+      const awb = await assignAwb(shipment.providerShipmentId!, courierId ?? undefined);
 
       shipment = await prisma.shipment.update({
         where: { orderId: order.id },
