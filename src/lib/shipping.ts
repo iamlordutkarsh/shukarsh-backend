@@ -165,6 +165,12 @@ export interface ResolvedShipping {
   courierName: string | null;
   option: CourierOption | null;
   quoted: boolean;
+  /**
+   * False only when the courier account answered and no one covers the pincode.
+   * Null when we could not ask, which must not be read as a refusal: an outage
+   * on our side is no reason to turn away an order we can almost certainly ship.
+   */
+  serviceable: boolean | null;
 }
 
 /**
@@ -215,7 +221,14 @@ export async function resolveShipping(params: {
   preferredCourierId?: number;
 }): Promise<ResolvedShipping> {
   const amount = shippingFee(params.orderValue);
-  const unquoted: ResolvedShipping = { amount, courierId: null, courierName: null, option: null, quoted: false };
+  const unquoted: ResolvedShipping = {
+    amount,
+    courierId: null,
+    courierName: null,
+    option: null,
+    quoted: false,
+    serviceable: null,
+  };
 
   if (!isShiprocketConfigured() || !pickupPincode()) return unquoted;
 
@@ -223,7 +236,7 @@ export async function resolveShipping(params: {
     // Insurance and the free-delivery threshold key off the same figure: what is
     // actually being paid.
     const { options } = await quoteShipping({ ...params, declaredValue: params.orderValue });
-    if (options.length === 0) return unquoted;
+    if (options.length === 0) return { ...unquoted, serviceable: false };
 
     const chosen = pickCourier(options, params.preferredCourierId);
 
@@ -233,6 +246,7 @@ export async function resolveShipping(params: {
       courierName: chosen.courierName,
       option: chosen,
       quoted: true,
+      serviceable: true,
     };
   } catch (error) {
     console.error("Shipping quote failed:", error);

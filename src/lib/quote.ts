@@ -40,6 +40,7 @@ const NO_SHIPPING: ResolvedShipping = {
   courierName: null,
   option: null,
   quoted: false,
+  serviceable: null,
 };
 
 /**
@@ -123,6 +124,7 @@ export function serializeQuote(quote: Quote) {
     totalAmount: quote.totalAmount,
     courierId: quote.shipping.courierId,
     courierName: quote.shipping.courierName,
+    serviceable: quote.shipping.serviceable,
     coupon: quote.coupon
       ? {
           code: quote.coupon.code,

@@ -166,6 +166,20 @@ router.post("/create", async (req, res) => {
       return;
     }
 
+    // Taking money for a parcel no courier will carry leaves the shop owing a
+    // refund and the customer waiting for something that cannot come. The
+    // checkout page already refuses, but it is the only thing that did, and a
+    // page is not where a rule like this belongs. Only a definite no counts:
+    // when we could not reach the courier at all, serviceable is null and the
+    // order goes through, because our outage is not the customer's problem.
+    if (shipping.serviceable === false) {
+      res.status(409).json({
+        error: `No courier is delivering to ${shippingAddress.zip} yet. Try another delivery address.`,
+        unserviceable: true,
+      });
+      return;
+    }
+
     // A code can expire or run out between the checkout page pricing it and the
     // customer pressing pay. Refusing here is better than quietly charging more
     // than the page last showed them.
