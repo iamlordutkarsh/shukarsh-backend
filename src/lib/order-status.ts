@@ -57,7 +57,20 @@ export interface StatusChange {
  *
  * Returns null when the order has gone, or the bookkeeping that was applied.
  */
-export async function applyOrderStatus(orderId: string, nextStatus: string): Promise<StatusChange | null> {
+export async function applyOrderStatus(
+  orderId: string,
+  nextStatus: string,
+  options?: {
+    /**
+     * The caller has already moved the stock itself, unit by unit. A return puts
+     * back only what came back and only what can be sold again, which is a finer
+     * decision than "the whole order is off". The shelf is left alone, but the
+     * order is still marked as no longer holding stock so a later close cannot
+     * put the same units back twice.
+     */
+    stockHandledElsewhere?: boolean;
+  }
+): Promise<StatusChange | null> {
   return prisma.$transaction(async (tx) => {
     const current = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
     if (!current) return null;
@@ -66,8 +79,9 @@ export async function applyOrderStatus(orderId: string, nextStatus: string): Pro
     const closing = nextStatus === "CANCELLED" || nextStatus === "RETURNED";
     const released = paid && closing && !current.stockReleased;
     const reserved = paid && !closing && current.stockReleased;
+    const moveStock = !options?.stockHandledElsewhere;
 
-    for (const item of current.items) {
+    for (const item of moveStock ? current.items : []) {
       if (released) {
         await tx.product.update({
           where: { id: item.productId },

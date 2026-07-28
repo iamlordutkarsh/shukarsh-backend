@@ -192,6 +192,17 @@ export function refundBreakdown(order: any, requested: RefundLine[]): RefundBrea
   };
 }
 
+/** Which decisions each state allows. Anything absent is terminal. */
+const TRANSITIONS: Record<string, string[]> = {
+  REQUESTED: ["APPROVED", "REJECTED"],
+  APPROVED: ["RECEIVED"],
+  RECEIVED: ["COMPLETED"],
+};
+
+export function canTransition(from: string, to: string): boolean {
+  return (TRANSITIONS[from] ?? []).includes(to);
+}
+
 /** Everything serializeReturn reads, so the two cannot drift apart. */
 export const returnInclude = {
   items: {
@@ -232,5 +243,38 @@ export function serializeReturn(request: any) {
     completedAt: request.completedAt ?? null,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt,
+  };
+}
+
+/**
+ * The queue view. Carries the order context a decision needs, including the
+ * payment id: until refunds are automated, that is what someone types into the
+ * Razorpay dashboard to send the money back.
+ */
+export function serializeAdminReturn(request: any) {
+  const order = request.order ?? {};
+  const proposed = refundBreakdown(
+    order,
+    (request.items ?? []).map((item: any) => ({
+      orderItemId: item.orderItemId,
+      quantity: item.quantity,
+    }))
+  );
+
+  return {
+    ...serializeReturn(request),
+    /** What it would be worth if decided now. refundAmount is the frozen figure. */
+    proposedRefund: proposed.total,
+    order: {
+      id: order.id,
+      status: order.status,
+      paymentStatus: order.paymentStatus,
+      totalAmount: Number(order.totalAmount ?? 0),
+      deliveredAt: order.deliveredAt ?? null,
+      customerName: order.customerName ?? null,
+      customerEmail: order.email ?? order.user?.email ?? null,
+      customerPhone: order.customerPhone ?? null,
+      razorpayPaymentId: order.razorpayPaymentId ?? null,
+    },
   };
 }
