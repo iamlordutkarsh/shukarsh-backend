@@ -48,7 +48,11 @@ const quoteSchema = z.object({
   state: z.string().trim().min(2).optional(),
   courierId: z.number().int().positive().optional(),
   couponCode: z.string().trim().max(40).optional(),
-  email: z.string().email().optional(),
+  // The checkout page re-prices on every keystroke, so a half-typed address
+  // arrives here constantly. Email only picks the identity a coupon limit
+  // counts against, so an unusable one is dropped rather than failing the quote
+  // and blanking the GST and discount the customer is looking at.
+  email: z.string().email().optional().catch(undefined),
 });
 
 const verifyPaymentSchema = z.object({
