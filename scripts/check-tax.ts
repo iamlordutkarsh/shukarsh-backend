@@ -12,6 +12,7 @@ import { computeTax, round2 } from "../src/lib/tax";
 import { allocateDiscount } from "../src/lib/coupon";
 import { collapseLines } from "../src/lib/shipping";
 import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
+import { refundBreakdown, returnEligibility } from "../src/lib/returns";
 
 let failures = 0;
 
@@ -183,6 +184,170 @@ check(
     { productId: "a", quantity: 2 },
     { productId: "b", quantity: 3 },
   ]
+);
+
+// --- What a return is worth ---
+
+// A bag of three dresses at 500 with 300 off, so 1200 changed hands. The tax
+// columns are what an order really stores: net of the discount, tax inside.
+const discountedOrder = {
+  itemsTotal: 1500,
+  discountTotal: 300,
+  shippingAmount: 0,
+  items: [
+    { id: "l1", price: 500, quantity: 1, taxableAmount: 357.14, taxAmount: 42.86 },
+    { id: "l2", price: 500, quantity: 2, taxableAmount: 714.29, taxAmount: 85.71 },
+  ],
+};
+
+check(
+  "one discounted line is worth what was paid for it, not its sticker price",
+  refundBreakdown(discountedOrder, [{ orderItemId: "l1", quantity: 1 }]).total,
+  400
+);
+check(
+  "half a line refunds half of what that line cost",
+  refundBreakdown(discountedOrder, [{ orderItemId: "l2", quantity: 1 }]).total,
+  400
+);
+check(
+  "the whole bag back refunds exactly what was charged",
+  refundBreakdown(discountedOrder, [
+    { orderItemId: "l1", quantity: 1 },
+    { orderItemId: "l2", quantity: 2 },
+  ]).total,
+  1200
+);
+check(
+  "a line that is not on the order is worth nothing",
+  refundBreakdown(discountedOrder, [{ orderItemId: "ghost", quantity: 1 }]).total,
+  0
+);
+check(
+  "asking for more units than were bought only refunds what was bought",
+  refundBreakdown(discountedOrder, [{ orderItemId: "l1", quantity: 9 }]).total,
+  400
+);
+
+// Delivery is only refunded when nothing is being kept.
+const paidDelivery = {
+  itemsTotal: 200,
+  discountTotal: 0,
+  shippingAmount: 49,
+  items: [
+    { id: "l1", price: 100, quantity: 1, taxableAmount: 100, taxAmount: 0 },
+    { id: "l2", price: 100, quantity: 1, taxableAmount: 100, taxAmount: 0 },
+  ],
+};
+
+check(
+  "keeping something means keeping the delivery fee",
+  refundBreakdown(paidDelivery, [{ orderItemId: "l1", quantity: 1 }]).shippingAmount,
+  0
+);
+check(
+  "sending everything back refunds the delivery too",
+  refundBreakdown(paidDelivery, [
+    { orderItemId: "l1", quantity: 1 },
+    { orderItemId: "l2", quantity: 1 },
+  ]).total,
+  249
+);
+
+// Orders placed before the tax columns existed carry zeroes in them.
+const legacyOrder = {
+  itemsTotal: 1000,
+  discountTotal: 100,
+  shippingAmount: 0,
+  items: [
+    { id: "l1", price: 400, quantity: 1, taxableAmount: 0, taxAmount: 0 },
+    { id: "l2", price: 600, quantity: 1, taxableAmount: 0, taxAmount: 0 },
+  ],
+};
+
+check(
+  "an order with no tax columns apportions the discount by value",
+  refundBreakdown(legacyOrder, [{ orderItemId: "l1", quantity: 1 }]).total,
+  360
+);
+check(
+  "and still adds back up to what was charged",
+  refundBreakdown(legacyOrder, [
+    { orderItemId: "l1", quantity: 1 },
+    { orderItemId: "l2", quantity: 1 },
+  ]).total,
+  900
+);
+
+// --- Who may ask for a return ---
+
+const delivered = (over: Record<string, unknown> = {}) => ({
+  status: "DELIVERED",
+  paymentStatus: "PAID",
+  deliveredAt: new Date(),
+  items: [{ id: "l1", quantity: 2, price: 100, taxableAmount: 200, taxAmount: 0 }],
+  returns: [],
+  ...over,
+});
+
+check("a delivered paid order may be returned", returnEligibility(delivered()).open, true);
+check(
+  "an unpaid order may not",
+  returnEligibility(delivered({ paymentStatus: "PENDING" })).block,
+  "NOT_PAID"
+);
+check(
+  "a parcel still in transit may not",
+  returnEligibility(delivered({ status: "SHIPPED" })).block,
+  "NOT_DELIVERED"
+);
+check(
+  "an order delivered before we recorded dates goes to a human",
+  returnEligibility(delivered({ deliveredAt: null })).block,
+  "NO_DELIVERY_DATE"
+);
+
+process.env.RETURN_WINDOW_DAYS = "7";
+const eightDaysAgo = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
+check(
+  "the window closes after seven days",
+  returnEligibility(delivered({ deliveredAt: eightDaysAgo })).block,
+  "WINDOW_CLOSED"
+);
+const sixDaysAgo = new Date(Date.now() - 6 * 24 * 60 * 60 * 1000);
+check(
+  "six days after delivery is still in time",
+  returnEligibility(delivered({ deliveredAt: sixDaysAgo })).open,
+  true
+);
+
+check(
+  "a return already being decided blocks a second one",
+  returnEligibility(
+    delivered({ returns: [{ status: "REQUESTED", items: [{ orderItemId: "l1", quantity: 1 }] }] })
+  ).block,
+  "ALREADY_OPEN"
+);
+check(
+  "a settled return leaves the rest of the line claimable",
+  returnEligibility(
+    delivered({ returns: [{ status: "COMPLETED", items: [{ orderItemId: "l1", quantity: 1 }] }] })
+  ).available,
+  { l1: 1 }
+);
+check(
+  "nothing is left once every unit has come back",
+  returnEligibility(
+    delivered({ returns: [{ status: "COMPLETED", items: [{ orderItemId: "l1", quantity: 2 }] }] })
+  ).block,
+  "NOTHING_LEFT"
+);
+check(
+  "a refused return puts its units back within reach",
+  returnEligibility(
+    delivered({ returns: [{ status: "REJECTED", items: [{ orderItemId: "l1", quantity: 2 }] }] })
+  ).available,
+  { l1: 2 }
 );
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
