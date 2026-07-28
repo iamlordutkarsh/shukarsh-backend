@@ -19,10 +19,12 @@ const couponFields = z
       .max(40)
       .regex(/^[A-Za-z0-9_-]+$/, "Use letters, numbers, hyphens and underscores only")
       .transform(normalizeCode),
-    description: z.string().trim().max(160).optional(),
+    // Nullable as well as optional: absent means leave it alone on an update,
+    // null is how the admin form says the field was cleared.
+    description: z.string().trim().max(160).nullable().optional(),
     type: z.nativeEnum(CouponType),
     value: z.number().min(0).default(0),
-    maxDiscount: z.number().positive().optional(),
+    maxDiscount: z.number().positive().nullable().optional(),
     minOrderValue: z.number().min(0).default(0),
     usageLimit: z.number().int().positive().nullable().optional(),
     perUserLimit: z.number().int().positive().nullable().optional(),
