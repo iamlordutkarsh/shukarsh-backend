@@ -85,12 +85,18 @@ export async function applyOrderStatus(orderId: string, nextStatus: string): Pro
       }
     }
 
+    // Written the first time only. A replayed Delivered scan, or an admin
+    // walking an order back and forward again, must not restart the customer's
+    // window to ask for a return.
+    const delivered = nextStatus === "DELIVERED" && !current.deliveredAt;
+
     await tx.order.update({
       where: { id: orderId },
       data: {
         status: nextStatus as never,
         ...(released ? { stockReleased: true } : {}),
         ...(reserved ? { stockReleased: false } : {}),
+        ...(delivered ? { deliveredAt: new Date() } : {}),
       },
     });
 

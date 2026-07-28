@@ -73,6 +73,7 @@ export function serializeOrder(order: any, options?: { includeCost?: boolean }) 
     customerName:
       order.customerName ?? ([user?.firstName, user?.lastName].filter(Boolean).join(" ") || null),
     customerPhone: order.customerPhone ?? null,
+    deliveredAt: order.deliveredAt ?? null,
     createdAt: order.createdAt,
     updatedAt: order.updatedAt,
     items: (order.items ?? []).map((item: any) => ({

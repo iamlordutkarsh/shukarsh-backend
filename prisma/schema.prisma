@@ -167,6 +167,10 @@ model Order {
   placeOfSupply     String?
   courierId         Int?
   courierName       String?
+  /// First time the order was seen delivered. The return window counts from
+  /// here, so it is written once and never moved: couriers replay scans, and a
+  /// second Delivered event must not hand out a fresh week to return in.
+  deliveredAt       DateTime?
   stockReleased     Boolean       @default(false)
   shippingAddress   Json?
   razorpayOrderId   String?       @unique
