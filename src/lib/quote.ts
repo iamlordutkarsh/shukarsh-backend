@@ -1,4 +1,5 @@
 import { evaluateCoupon, findCoupon, type AppliedCoupon } from "./coupon";
+import { shippingFee } from "./shipping-policy";
 import { priceCart, resolveShipping, type PricedCart, type ResolvedShipping } from "./shipping";
 import { computeTax, round2, type TaxBreakdown } from "./tax";
 
@@ -28,6 +29,11 @@ export interface Quote {
   netLineGross: number[];
 }
 
+/**
+ * No pincode yet, so no courier and no delivery estimate. The fee is still the
+ * shop's to state: it comes from the order value, not from where it is going,
+ * which is what lets the bag say "free delivery" before an address exists.
+ */
 const NO_SHIPPING: ResolvedShipping = {
   amount: 0,
   courierId: null,
@@ -44,9 +50,9 @@ const NO_SHIPPING: ResolvedShipping = {
  * find out is a customer seeing one total on the page and a different one on
  * their card statement.
  *
- * Order of operations is deliberate. The discount comes off first, then
- * shipping is quoted against what is actually being paid, then GST is worked
- * out on the discounted amounts, because tax is owed on what the customer
+ * Order of operations is deliberate. The discount comes off first, then the
+ * delivery fee is decided against what is actually being paid, then GST is
+ * worked out on the discounted amounts, because tax is owed on what the customer
  * really hands over and not on a price nobody paid.
  */
 export async function buildQuote(input: QuoteInput): Promise<Quote> {
@@ -77,11 +83,10 @@ export async function buildQuote(input: QuoteInput): Promise<Quote> {
     ? await resolveShipping({
         pincode: input.pincode,
         parcel: cart.parcel,
-        // Insurance and COD limits key off what is actually being paid.
-        declaredValue: netItemsTotal,
+        orderValue: netItemsTotal,
         preferredCourierId: input.courierId,
       })
-    : NO_SHIPPING;
+    : { ...NO_SHIPPING, amount: shippingFee(netItemsTotal) };
 
   const shipping = coupon?.freeShipping ? { ...quotedShipping, amount: 0 } : quotedShipping;
 

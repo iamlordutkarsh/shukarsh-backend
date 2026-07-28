@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { computeParcel, createTtlCache, weightBucket, type Parcel } from "./parcel";
+import { shippingFee } from "./shipping-policy";
 import { round2 } from "./tax";
 import {
   getServiceability,
@@ -166,33 +167,48 @@ export interface ResolvedShipping {
   quoted: boolean;
 }
 
+/** Who carries the parcel. The customer does not choose this, the shop does. */
+export function pickCourier(options: CourierOption[], preferredCourierId?: number): CourierOption {
+  if (preferredCourierId) {
+    const preferred = options.find((option) => option.courierId === preferredCourierId);
+    if (preferred) return preferred;
+  }
+
+  return options.find((option) => option.recommended) ?? options[0];
+}
+
 /**
- * Resolves what to charge for shipping. Falls back to free shipping so the store
- * keeps taking orders when the courier account is unavailable.
+ * What the customer pays to have this delivered, and who we will book to carry
+ * it. Two separate questions: the price comes from the shop's own policy, the
+ * courier from what is actually available today.
+ *
+ * Keeping them separate is what lets the shop keep taking orders when the
+ * courier account is unreachable. The old version priced delivery off the live
+ * rate and fell back to zero, so an outage quietly made shipping free on every
+ * order. Now a failed quote costs us the courier's name, not the fee.
  */
 export async function resolveShipping(params: {
   pincode: string;
   parcel: Parcel;
-  declaredValue: number;
+  /** What the customer is paying for the goods, after any coupon. */
+  orderValue: number;
   preferredCourierId?: number;
 }): Promise<ResolvedShipping> {
-  if (!isShiprocketConfigured() || !pickupPincode()) {
-    return { amount: 0, courierId: null, courierName: null, option: null, quoted: false };
-  }
+  const amount = shippingFee(params.orderValue);
+  const unquoted: ResolvedShipping = { amount, courierId: null, courierName: null, option: null, quoted: false };
+
+  if (!isShiprocketConfigured() || !pickupPincode()) return unquoted;
 
   try {
-    const { options } = await quoteShipping(params);
-    if (options.length === 0) {
-      return { amount: 0, courierId: null, courierName: null, option: null, quoted: false };
-    }
+    // Insurance and the free-delivery threshold key off the same figure: what is
+    // actually being paid.
+    const { options } = await quoteShipping({ ...params, declaredValue: params.orderValue });
+    if (options.length === 0) return unquoted;
 
-    const chosen =
-      (params.preferredCourierId && options.find((option) => option.courierId === params.preferredCourierId)) ||
-      options.find((option) => option.recommended) ||
-      options[0];
+    const chosen = pickCourier(options, params.preferredCourierId);
 
     return {
-      amount: Math.round(chosen.rate),
+      amount,
       courierId: chosen.courierId,
       courierName: chosen.courierName,
       option: chosen,
@@ -200,6 +216,6 @@ export async function resolveShipping(params: {
     };
   } catch (error) {
     console.error("Shipping quote failed:", error);
-    return { amount: 0, courierId: null, courierName: null, option: null, quoted: false };
+    return unquoted;
   }
 }

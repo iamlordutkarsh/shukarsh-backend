@@ -204,11 +204,26 @@ with Resend). Leave them unset and the store behaves exactly as before, just
 without email. A send that fails is logged and never blocks a payment or a
 shipment.
 
+### What delivery costs the customer
+
+The shop's own policy, not the courier's rate: free at or above
+`SHIPPING_FREE_ABOVE` (299 by default) of order value after any coupon, and
+`SHIPPING_FLAT_FEE` (0 by default) below it. So delivery is free everywhere until
+a fee is configured.
+
+That separation is deliberate. A live courier rate has two customers paying
+different amounts for the same dress because one lives further away, it publishes
+what the shop pays to anyone with a pincode, and it makes the total depend on
+Shiprocket answering. Under this policy an outage costs a delivery estimate, not
+the fee. What the courier charges is still worth knowing before you move these
+numbers: `npm run rates:survey` quotes real rates across 33 pincodes and prints
+the median and p90 to set them from.
+
 ### Shiprocket
 
 Shipping is optional. With no Shiprocket credentials set the store still takes
-orders and simply charges nothing for delivery, so you can launch before the
-courier account is approved.
+orders, charges the same policy fee and simply cannot estimate a delivery date,
+so you can launch before the courier account is approved.
 
 1. Add a pickup address under **Settings > Pickup Addresses** and note its
    nickname and pincode.

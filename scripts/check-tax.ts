@@ -11,6 +11,7 @@ process.env.GST_ENABLED = "true";
 import { computeTax, round2 } from "../src/lib/tax";
 import { allocateDiscount } from "../src/lib/coupon";
 import { collapseLines } from "../src/lib/shipping";
+import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
 
 let failures = 0;
 
@@ -135,6 +136,26 @@ check(
   mixedDiscount.lines[1].tax,
   round2(500 - 500 / 1.05)
 );
+
+// --- What the shop charges to deliver it ---
+
+// The threshold is read against what the customer pays, so these are the two
+// sides of it and the boundary itself.
+process.env.SHIPPING_FREE_ABOVE = "299";
+process.env.SHIPPING_FLAT_FEE = "49";
+
+check("a big enough order ships free", shippingFee(300), 0);
+check("the threshold itself ships free", shippingFee(299), 0);
+check("a smaller order pays the flat fee", shippingFee(298), 49);
+check("the fee is the same wherever it is going", shippingFee(100), shippingFee(298));
+check("shortfall is what is left to the threshold", freeDeliveryShortfall(250), 49);
+check("nothing is short once delivery is free", freeDeliveryShortfall(299), 0);
+
+// No fee configured means delivery is simply free, and then there is no saving
+// to dangle in front of anyone.
+process.env.SHIPPING_FLAT_FEE = "0";
+check("a small order still ships free when no fee is set", shippingFee(1), 0);
+check("no shortfall to advertise when delivery is always free", freeDeliveryShortfall(1), 0);
 
 // --- The bag itself, before any of the above sees it ---
 
