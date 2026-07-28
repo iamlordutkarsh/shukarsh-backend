@@ -192,6 +192,17 @@ export function refundBreakdown(order: any, requested: RefundLine[]): RefundBrea
   };
 }
 
+/** Everything serializeReturn reads, so the two cannot drift apart. */
+export const returnInclude = {
+  items: {
+    include: {
+      orderItem: {
+        include: { product: { select: { id: true, name: true, slug: true, images: true } } },
+      },
+    },
+  },
+} as const;
+
 export function serializeReturn(request: any) {
   return {
     id: request.id,

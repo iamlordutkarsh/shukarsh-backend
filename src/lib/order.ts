@@ -1,3 +1,5 @@
+import { returnEligibility, serializeReturn } from "./returns";
+
 /** Only what an order line needs to name the thing that was bought. Never the
  *  whole product row: an include that pulled one in would carry costPrice. */
 function serializeLineProduct(product: any) {
@@ -91,5 +93,10 @@ export function serializeOrder(order: any, options?: { includeCost?: boolean }) 
         : {}),
     })),
     shipment: serializeShipment(order.shipment),
+    returns: (order.returns ?? []).map(serializeReturn),
+    // Only when the relation was actually loaded. Eligibility is decided partly
+    // by the returns already on the order, so an include that left them out
+    // would produce a confident wrong answer rather than no answer.
+    ...(Array.isArray(order.returns) ? { returnWindow: returnEligibility(order) } : {}),
   };
 }

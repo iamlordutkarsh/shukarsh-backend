@@ -2,7 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { OrderStatus } from "@prisma/client";
+import { OrderStatus, ReturnOutcome, ReturnReason } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
@@ -12,7 +12,9 @@ import { buildQuote, serializeQuote } from "../lib/quote";
 import { serializeOrder } from "../lib/order";
 import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
 import { InsufficientStockError, applyOrderStatus } from "../lib/order-status";
-import { sendOrderConfirmation } from "../lib/notifications";
+import { sendOrderConfirmation, sendReturnRequested } from "../lib/notifications";
+import { returnBlockMessage, returnEligibility, returnInclude, serializeReturn } from "../lib/returns";
+import { handleWriteError } from "../lib/write-errors";
 
 const router = Router();
 
@@ -67,6 +69,22 @@ const verifyPaymentSchema = z.object({
 
 const statusSchema = z.object({ status: z.nativeEnum(OrderStatus) });
 
+const returnRequestSchema = z.object({
+  reason: z.nativeEnum(ReturnReason),
+  outcome: z.nativeEnum(ReturnOutcome),
+  // Required, and long enough to be a sentence. "Damaged" on its own cannot be
+  // judged without writing back to ask what was damaged.
+  note: z.string().trim().min(10).max(1000),
+  items: z
+    .array(
+      z.object({
+        orderItemId: z.string().min(1),
+        quantity: z.number().int().positive().max(20),
+      })
+    )
+    .min(1),
+});
+
 const orderInclude = {
   user: { select: { email: true, firstName: true, lastName: true } },
   shipment: true,
@@ -75,6 +93,7 @@ const orderInclude = {
       product: { select: { id: true, name: true, slug: true, images: true } },
     },
   },
+  returns: { orderBy: { createdAt: "desc" }, include: returnInclude },
 } as const;
 
 /**
@@ -424,6 +443,123 @@ router.post("/:id/cancel", authenticate, async (req, res) => {
   } catch (error) {
     console.error("Customer order cancellation failed:", error);
     res.status(500).json({ error: "Could not cancel this order" });
+  }
+});
+
+/**
+ * Opens a return against a delivered order.
+ *
+ * Signing in is required, which leaves guests to email us: an order with no
+ * account behind it cannot be proved to belong to whoever is asking, and a
+ * return request is a claim on money.
+ */
+router.post("/:id/returns", authenticate, async (req, res) => {
+  const result = returnRequestSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
+    return;
+  }
+
+  const id = req.params.id as string;
+  const order = await prisma.order.findUnique({ where: { id }, include: orderInclude });
+
+  // Same shape as fetching one: an order that is not yours does not exist.
+  if (!order || order.userId !== req.user!.id) {
+    res.status(404).json({ error: "Order not found" });
+    return;
+  }
+
+  const eligibility = returnEligibility(order);
+  if (!eligibility.open) {
+    res.status(409).json({ error: returnBlockMessage(eligibility.block!) });
+    return;
+  }
+
+  // Collapsed first, for the reason the bag is: the same line sent twice would
+  // pass the check on each half and together claim more than was bought.
+  const asked = new Map<string, number>();
+  for (const line of result.data.items) {
+    asked.set(line.orderItemId, (asked.get(line.orderItemId) ?? 0) + line.quantity);
+  }
+
+  for (const [orderItemId, quantity] of asked) {
+    const available = eligibility.available[orderItemId];
+
+    if (available === undefined) {
+      res.status(400).json({ error: "One of those items is not on this order" });
+      return;
+    }
+
+    if (quantity > available) {
+      const name = order.items.find((item) => item.id === orderItemId)?.product.name ?? "that item";
+      res.status(409).json({
+        error:
+          available === 0
+            ? `${name} has already been returned.`
+            : `You can only send back ${available} of ${name}.`,
+      });
+      return;
+    }
+  }
+
+  try {
+    const created = await prisma.returnRequest.create({
+      data: {
+        orderId: order.id,
+        userId: req.user!.id,
+        reason: result.data.reason,
+        outcome: result.data.outcome,
+        customerNote: result.data.note,
+        items: {
+          create: [...asked].map(([orderItemId, quantity]) => ({ orderItemId, quantity })),
+        },
+      },
+      include: returnInclude,
+    });
+
+    void sendReturnRequested(created.id);
+    res.status(201).json({ return: serializeReturn(created) });
+  } catch (error) {
+    handleWriteError(res, error, { fallback: "Could not open this return" });
+  }
+});
+
+/** Lets a customer take back a request we have not decided on yet. */
+router.post("/:id/returns/:returnId/withdraw", authenticate, async (req, res) => {
+  const returnId = req.params.returnId as string;
+  const request = await prisma.returnRequest.findUnique({
+    where: { id: returnId },
+    select: { id: true, status: true, orderId: true, order: { select: { userId: true } } },
+  });
+
+  if (!request || request.orderId !== req.params.id || request.order.userId !== req.user!.id) {
+    res.status(404).json({ error: "Return not found" });
+    return;
+  }
+
+  if (request.status !== "REQUESTED") {
+    res.status(409).json({
+      error:
+        request.status === "WITHDRAWN"
+          ? "This return was already withdrawn."
+          : "We have already started on this return, so please talk to us rather than closing it here.",
+    });
+    return;
+  }
+
+  try {
+    const updated = await prisma.returnRequest.update({
+      where: { id: returnId },
+      data: { status: "WITHDRAWN" },
+      include: returnInclude,
+    });
+
+    res.json({ return: serializeReturn(updated) });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Return not found",
+      fallback: "Could not withdraw this return",
+    });
   }
 });
 

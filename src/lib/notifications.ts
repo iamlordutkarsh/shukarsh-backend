@@ -116,6 +116,161 @@ function recipientOf(order: { email: string | null; user: { email: string } | nu
   return order.email ?? order.user?.email ?? null;
 }
 
+/** Where a copy of anything the shop has to act on goes. */
+function shopInbox(): string | null {
+  return process.env.EMAIL_REPLY_TO || process.env.EMAIL_FROM || null;
+}
+
+async function loadReturn(returnId: string) {
+  return prisma.returnRequest.findUnique({
+    where: { id: returnId },
+    include: {
+      order: { include: { user: { select: { email: true } } } },
+      items: { include: { orderItem: { include: { product: { select: { name: true } } } } } },
+    },
+  });
+}
+
+const REASON_LABEL: Record<string, string> = {
+  DAMAGED: "arrived damaged",
+  WRONG_ITEM: "was the wrong item",
+};
+
+const OUTCOME_LABEL: Record<string, string> = {
+  REFUND: "a refund",
+  EXCHANGE: "a replacement",
+};
+
+function returnRows(items: { quantity: number; orderItem: { product: { name: string } } }[]): string {
+  return items
+    .map(
+      (item) => `<tr><td style="padding:8px 0;font-size:14px">${escapeHtml(
+        item.orderItem.product.name
+      )}<span style="color:#9a94ad"> × ${item.quantity}</span></td></tr>`
+    )
+    .join("");
+}
+
+function noteBlock(label: string, note: string): string {
+  return `<p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#6b6480">
+    <strong style="color:#2c2440">${label}</strong><br>${escapeHtml(note)}</p>`;
+}
+
+/** Acknowledges a return the moment it is asked for, and tells the shop. */
+export async function sendReturnRequested(returnId: string): Promise<void> {
+  if (!isEmailConfigured()) return;
+
+  try {
+    const request = await loadReturn(returnId);
+    if (!request) return;
+
+    const ref = reference(request.orderId);
+    const items = returnRows(request.items);
+    const asked = OUTCOME_LABEL[request.outcome] ?? "a refund";
+    const because = REASON_LABEL[request.reason] ?? "was not right";
+    const to = recipientOf(request.order);
+
+    if (to) {
+      await sendEmail({
+        to,
+        subject: `We have your return request for order ${ref}`,
+        html: layout(
+          "Thank you, we are on it",
+          `You have asked us for ${asked} on order <strong>${ref}</strong> because it ${because}. Someone will look at this and write back, usually within a day.`,
+          `<table style="width:100%;border-collapse:collapse">${items}</table>
+           ${noteBlock("What you told us", request.customerNote)}`
+        ),
+      });
+    }
+
+    const shop = shopInbox();
+    if (shop) {
+      await sendEmail({
+        to: shop,
+        subject: `Return requested on order ${ref}`,
+        html: layout(
+          "A return is waiting on you",
+          `Order <strong>${ref}</strong>: the customer wants ${asked} because it ${because}.`,
+          `<table style="width:100%;border-collapse:collapse">${items}</table>
+           ${noteBlock("Their words", request.customerNote)}
+           <p style="margin:24px 0 0"><a href="${storeUrl()}/admin/returns"
+              style="display:inline-block;padding:12px 24px;border-radius:999px;background:#8b6bff;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Open the returns queue</a></p>`
+        ),
+      });
+    }
+  } catch (error) {
+    console.error("Return request email failed:", error);
+  }
+}
+
+/** Tells the customer we accepted or refused, and why. */
+export async function sendReturnDecision(returnId: string): Promise<void> {
+  if (!isEmailConfigured()) return;
+
+  try {
+    const request = await loadReturn(returnId);
+    if (!request) return;
+
+    const to = recipientOf(request.order);
+    if (!to) return;
+
+    const ref = reference(request.orderId);
+    const approved = request.status === "APPROVED";
+    const asked = OUTCOME_LABEL[request.outcome] ?? "a refund";
+
+    await sendEmail({
+      to,
+      subject: approved
+        ? `Your return for order ${ref} is approved`
+        : `About your return for order ${ref}`,
+      html: layout(
+        approved ? "Your return is approved" : "We cannot take this one back",
+        approved
+          ? `We will arrange a pickup for order <strong>${ref}</strong> and email you the details. Once the parcel is back with us, ${asked} follows.`
+          : `We have looked at your request on order <strong>${ref}</strong> and cannot accept it.`,
+        `<table style="width:100%;border-collapse:collapse">${returnRows(request.items)}</table>
+         ${request.adminNote ? noteBlock("Why", request.adminNote) : ""}`
+      ),
+    });
+  } catch (error) {
+    console.error("Return decision email failed:", error);
+  }
+}
+
+/** Closes the loop once the money is back or a replacement is on its way. */
+export async function sendReturnCompleted(returnId: string): Promise<void> {
+  if (!isEmailConfigured()) return;
+
+  try {
+    const request = await loadReturn(returnId);
+    if (!request) return;
+
+    const to = recipientOf(request.order);
+    if (!to) return;
+
+    const ref = reference(request.orderId);
+    const refunded = request.outcome === "REFUND";
+    const amount = request.refundAmount != null ? money(request.refundAmount) : null;
+
+    await sendEmail({
+      to,
+      subject: refunded ? `Refund sent for order ${ref}` : `Replacement on its way for order ${ref}`,
+      html: layout(
+        refunded ? "Your refund is on its way" : "Your replacement is on its way",
+        refunded
+          ? `We have refunded ${
+              amount ? `<strong>${amount}</strong>` : "your return"
+            } against order <strong>${ref}</strong>. Banks take a few working days to show it, and it goes back to the card or account you paid with.`
+          : `A replacement for order <strong>${ref}</strong> is being packed. You will get tracking as soon as it leaves us.`,
+        `<table style="width:100%;border-collapse:collapse">${returnRows(request.items)}</table>
+         ${request.adminNote ? noteBlock("Note from us", request.adminNote) : ""}`
+      ),
+    });
+  } catch (error) {
+    console.error("Return completion email failed:", error);
+  }
+}
+
 /** Receipt sent the moment a payment is confirmed, from either path. */
 export async function sendOrderConfirmation(orderId: string): Promise<void> {
   if (!isEmailConfigured()) return;
