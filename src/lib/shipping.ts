@@ -57,12 +57,28 @@ export function collapseLines(items: CartLine[]): CartLine[] {
   return [...quantities].map(([productId, quantity]) => ({ productId, quantity }));
 }
 
+export interface PriceCartOptions {
+  /**
+   * Set for a bag that has already been bought.
+   *
+   * A bag someone is still deciding on has to be coverable right now: in stock
+   * and still for sale. A placed order is neither question. Its units came off
+   * the shelf the moment the payment landed and the shop may have delisted the
+   * product since, so asking again refuses to let the last one out of the door:
+   * an order that emptied the stock could not be shipped at all.
+   */
+  placed?: boolean;
+}
+
 /** Prices and weights always come from the database, never from the client. */
-export async function priceCart(cartItems: CartLine[]): Promise<PricedCart> {
+export async function priceCart(
+  cartItems: CartLine[],
+  options?: PriceCartOptions
+): Promise<PricedCart> {
   const items = collapseLines(cartItems);
   const ids = items.map((item) => item.productId);
   const products = await prisma.product.findMany({
-    where: { id: { in: ids }, isActive: true },
+    where: { id: { in: ids }, ...(options?.placed ? {} : { isActive: true }) },
     select: {
       id: true,
       name: true,
@@ -89,7 +105,7 @@ export async function priceCart(cartItems: CartLine[]): Promise<PricedCart> {
     if (!product) {
       throw Object.assign(new Error("A product in your bag is no longer available"), { statusCode: 400 });
     }
-    if (product.stock < item.quantity) {
+    if (!options?.placed && product.stock < item.quantity) {
       throw Object.assign(new Error(`Only ${product.stock} left of ${product.name}`), { statusCode: 409 });
     }
 

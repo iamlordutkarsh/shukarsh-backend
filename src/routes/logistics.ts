@@ -231,7 +231,10 @@ router.get("/orders/:id/rates", authenticate, requireAdmin, async (req, res) => 
   }
 
   try {
-    const cart = await priceCart(order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+    const cart = await priceCart(
+      order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      { placed: true }
+    );
     const address = order.shippingAddress as { zip?: string } | null;
     if (!address?.zip) {
       res.status(400).json({ error: "This order has no delivery pincode" });
@@ -284,7 +287,10 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
   }
 
   try {
-    const cart = await priceCart(order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })));
+    const cart = await priceCart(
+      order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      { placed: true }
+    );
     let shipment = order.shipment;
 
     if (!shipment?.providerShipmentId) {
