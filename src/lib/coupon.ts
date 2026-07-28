@@ -91,16 +91,30 @@ export function allocateDiscount(
   return perLine;
 }
 
+/**
+ * Who a limit counts against.
+ *
+ * A signed-in customer is tracked by account. A guest can only be tracked by
+ * the email they typed, which a determined person can change, so treat the
+ * per-customer limit as a speed bump rather than a lock.
+ *
+ * The match is case-insensitive rather than lowercasing the input: emails are
+ * normalised on write now, but rows written before that kept whatever the
+ * customer typed, and an exact match would read those as a different person.
+ */
+function identityFilter(userId: string | null | undefined, email: string | null | undefined) {
+  if (userId) return { userId };
+  if (email) return { email: { equals: email, mode: "insensitive" as const } };
+  return null;
+}
+
 /** How many times this customer has already used this code. */
 async function redemptionCount(
   couponId: string,
   userId: string | null | undefined,
   email: string | null | undefined
 ): Promise<number> {
-  // A signed-in customer is tracked by account. A guest can only be tracked by
-  // the email they typed, which a determined person can change, so treat the
-  // per-customer limit as a speed bump rather than a lock.
-  const identity = userId ? { userId } : email ? { email: email.toLowerCase() } : null;
+  const identity = identityFilter(userId, email);
   if (!identity) return 0;
 
   // Orders still waiting to be paid count as well. A redemption is only booked
@@ -119,7 +133,7 @@ async function hasEarlierOrder(
   userId: string | null | undefined,
   email: string | null | undefined
 ): Promise<boolean> {
-  const identity = userId ? { userId } : email ? { email: email.toLowerCase() } : null;
+  const identity = identityFilter(userId, email);
   if (!identity) return false;
 
   const count = await prisma.order.count({ where: { ...identity, paymentStatus: "PAID" } });

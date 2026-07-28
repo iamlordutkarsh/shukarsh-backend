@@ -32,7 +32,10 @@ const createOrderSchema = z.object({
     })
   ).min(1),
   shippingAddress: shippingAddressSchema,
-  email: z.string().email(),
+  // Lowercased on the way in so an address is one identity however it was
+  // capitalised. Coupon eligibility is decided by matching this against past
+  // orders, and Rahul@Gmail.com not matching rahul@gmail.com is a free code.
+  email: z.string().email().transform((value) => value.toLowerCase()),
   courierId: z.number().int().positive().optional(),
   couponCode: z.string().trim().max(40).optional(),
 });
