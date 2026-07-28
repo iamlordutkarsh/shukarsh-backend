@@ -6,6 +6,7 @@ import { normalizeCode } from "../lib/coupon";
 import { buildQuote } from "../lib/quote";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
+import { couponLimiter } from "../middleware/rate-limit";
 
 const router = Router();
 
@@ -107,7 +108,7 @@ const couponInclude = {
  * the card. Shipping and GST are left out of the answer because the checkout
  * page asks for those separately once it knows the address.
  */
-router.post("/apply", async (req, res) => {
+router.post("/apply", couponLimiter, async (req, res) => {
   const result = applySchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });

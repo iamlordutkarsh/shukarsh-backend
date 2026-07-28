@@ -23,3 +23,30 @@ export const registerLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: "Too many accounts created from here. Please try again later." },
 });
+
+/**
+ * Guessing guard for coupon codes. A rejection and an acceptance are plainly
+ * different answers, so an uncapped endpoint hands the whole code list to
+ * anyone with a word list and a few minutes. Successes count too: a working
+ * code found on the tenth try is still a code found.
+ */
+export const couponLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_COUPON_MAX) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many code attempts. Please wait a few minutes and try again." },
+});
+
+/**
+ * The same guard for pricing a bag, which also takes a code. Set far higher
+ * because the checkout page calls it legitimately on every keystroke of an
+ * address: too tight here and checkout stops showing a total.
+ */
+export const quoteLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_QUOTE_MAX) || 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many pricing requests. Please wait a moment and try again." },
+});

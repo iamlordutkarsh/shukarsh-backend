@@ -6,6 +6,7 @@ import { OrderStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
+import { quoteLimiter } from "../middleware/rate-limit";
 import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
 import { buildQuote, serializeQuote } from "../lib/quote";
 import { serializeOrder } from "../lib/order";
@@ -101,7 +102,7 @@ function optionalUserId(req: { headers: { authorization?: string } }): string | 
  * number here has to come from the same code that /create will charge. Nothing
  * is written down and no payment is started.
  */
-router.post("/quote", async (req, res) => {
+router.post("/quote", quoteLimiter, async (req, res) => {
   const result = quoteSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });
