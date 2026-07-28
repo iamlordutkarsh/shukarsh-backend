@@ -11,7 +11,7 @@ import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
 import { pickCourier, priceCart, quoteShipping } from "../lib/shipping";
-import { freeDeliveryShortfall, shippingFee } from "../lib/shipping-policy";
+import { freeDeliveryShortfall, shippingFee, shippingPolicy } from "../lib/shipping-policy";
 import { createTtlCache } from "../lib/parcel";
 import {
   ShiprocketError,
@@ -84,9 +84,16 @@ function handleProviderError(res: any, error: unknown, fallback: string) {
 }
 
 router.get("/config", (_req, res) => {
+  // The delivery policy is public on purpose. It costs the same wherever the
+  // parcel goes, so the bag can state it before anyone types an address, which
+  // is the whole point of not pricing delivery off a courier rate.
+  const policy = shippingPolicy();
+
   res.json({
     enabled: isShiprocketConfigured() && Boolean(pickupPincode()),
     pickupPincode: pickupPincode() || null,
+    freeAbove: policy.freeAbove,
+    flatFee: policy.flatFee,
   });
 });
 
