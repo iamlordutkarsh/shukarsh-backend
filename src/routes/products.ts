@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { handleWriteError } from "../lib/write-errors";
 import { serializeProduct, serializeProducts } from "../lib/product";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
@@ -124,8 +125,12 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
       data: { ...result.data, gstRate: result.data.gstRate ?? defaultGstRate() },
     });
     res.status(201).json({ product: serializeProduct(product, { includeCost: true }) });
-  } catch {
-    res.status(409).json({ error: "Slug already exists or invalid category" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      duplicate: "A product already uses that slug",
+      related: "That category does not exist",
+      fallback: "Could not create this product",
+    });
   }
 });
 
@@ -144,8 +149,13 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       data: result.data,
     });
     res.json({ product: serializeProduct(product, { includeCost: true }) });
-  } catch {
-    res.status(404).json({ error: "Product not found" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Product not found",
+      duplicate: "Another product already uses that slug",
+      related: "That category does not exist",
+      fallback: "Could not save this product",
+    });
   }
 });
 
@@ -155,8 +165,15 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   try {
     await prisma.product.delete({ where: { id } });
     res.json({ message: "Product deleted" });
-  } catch {
-    res.status(404).json({ error: "Product not found" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Product not found",
+      // OrderItem points here so an invoice can still name what was bought, and
+      // the database will not let that history be broken. Switching the product
+      // off is the way to retire it.
+      related: "This product has orders against it. Switch it off instead of deleting it.",
+      fallback: "Could not delete this product",
+    });
   }
 });
 

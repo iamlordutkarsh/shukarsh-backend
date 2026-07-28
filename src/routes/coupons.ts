@@ -2,6 +2,7 @@ import { Router } from "express";
 import { z } from "zod";
 import { CouponType } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { handleWriteError } from "../lib/write-errors";
 import { normalizeCode } from "../lib/coupon";
 import { buildQuote } from "../lib/quote";
 import { verifyToken } from "../lib/auth";
@@ -224,8 +225,12 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
     });
 
     res.status(201).json({ coupon: serializeCoupon(coupon) });
-  } catch {
-    res.status(409).json({ error: "That code already exists, or a category or product is unknown" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      duplicate: "That code already exists",
+      related: "A category or product this code targets no longer exists",
+      fallback: "Could not create this coupon",
+    });
   }
 });
 
@@ -278,8 +283,13 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
     });
 
     res.json({ coupon: serializeCoupon(coupon) });
-  } catch {
-    res.status(404).json({ error: "Coupon not found, or that code is taken" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Coupon not found",
+      duplicate: "Another coupon already uses that code",
+      related: "A category or product this code targets no longer exists",
+      fallback: "Could not save this coupon",
+    });
   }
 });
 
@@ -311,8 +321,11 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
 
     await prisma.coupon.delete({ where: { id } });
     res.json({ deleted: true });
-  } catch {
-    res.status(404).json({ error: "Coupon not found" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Coupon not found",
+      fallback: "Could not delete this coupon",
+    });
   }
 });
 

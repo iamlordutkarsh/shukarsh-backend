@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { handleWriteError } from "../lib/write-errors";
 import { serializeProducts } from "../lib/product";
 import { authenticate, requireAdmin } from "../middleware/auth";
 
@@ -51,8 +52,11 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   try {
     const category = await prisma.category.create({ data: result.data });
     res.status(201).json({ category });
-  } catch {
-    res.status(409).json({ error: "Slug already exists" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      duplicate: "A category already uses that slug",
+      fallback: "Could not create this category",
+    });
   }
 });
 
@@ -71,8 +75,12 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       data: result.data,
     });
     res.json({ category });
-  } catch {
-    res.status(404).json({ error: "Category not found" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Category not found",
+      duplicate: "Another category already uses that slug",
+      fallback: "Could not save this category",
+    });
   }
 });
 
@@ -82,8 +90,15 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   try {
     await prisma.category.delete({ where: { id } });
     res.json({ message: "Category deleted" });
-  } catch {
-    res.status(404).json({ error: "Category not found" });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Category not found",
+      // Product.categoryId is a required relation, so the database refuses this
+      // while anything is still filed under it. Saying "not found" here sent an
+      // admin looking for a category that was in front of them.
+      related: "This category still has products in it. Move or delete those first.",
+      fallback: "Could not delete this category",
+    });
   }
 });
 
