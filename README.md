@@ -46,6 +46,9 @@ The API will be available at `http://localhost:5000`.
 - `npm run dev` — Start development server with hot reload
 - `npm run build` — Compile TypeScript
 - `npm run start` — Start production server
+- `npm run lint` — ESLint over the whole repo
+- `npm run check:tax` — Assert the GST, discount and delivery arithmetic
+- `npm run rates:survey` — Quote real courier rates across India (needs Shiprocket credentials)
 - `npm run db:migrate` — Run Prisma migrations
 - `npm run db:studio` — Open Prisma Studio
 

@@ -51,7 +51,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   try {
     const category = await prisma.category.create({ data: result.data });
     res.status(201).json({ category });
-  } catch (error) {
+  } catch {
     res.status(409).json({ error: "Slug already exists" });
   }
 });
@@ -71,7 +71,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       data: result.data,
     });
     res.json({ category });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Category not found" });
   }
 });
@@ -82,7 +82,7 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   try {
     await prisma.category.delete({ where: { id } });
     res.json({ message: "Category deleted" });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Category not found" });
   }
 });

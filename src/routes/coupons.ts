@@ -224,7 +224,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
     });
 
     res.status(201).json({ coupon: serializeCoupon(coupon) });
-  } catch (error) {
+  } catch {
     res.status(409).json({ error: "That code already exists, or a category or product is unknown" });
   }
 });
@@ -278,7 +278,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
     });
 
     res.json({ coupon: serializeCoupon(coupon) });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Coupon not found, or that code is taken" });
   }
 });
@@ -311,7 +311,7 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
 
     await prisma.coupon.delete({ where: { id } });
     res.json({ deleted: true });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Coupon not found" });
   }
 });

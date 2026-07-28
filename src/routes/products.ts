@@ -124,7 +124,7 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
       data: { ...result.data, gstRate: result.data.gstRate ?? defaultGstRate() },
     });
     res.status(201).json({ product: serializeProduct(product, { includeCost: true }) });
-  } catch (error) {
+  } catch {
     res.status(409).json({ error: "Slug already exists or invalid category" });
   }
 });
@@ -144,7 +144,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       data: result.data,
     });
     res.json({ product: serializeProduct(product, { includeCost: true }) });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Product not found" });
   }
 });
@@ -155,7 +155,7 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   try {
     await prisma.product.delete({ where: { id } });
     res.json({ message: "Product deleted" });
-  } catch (error) {
+  } catch {
     res.status(404).json({ error: "Product not found" });
   }
 });
