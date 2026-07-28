@@ -283,6 +283,8 @@ export async function createAdhocOrder(payload: CreateOrderPayload): Promise<Cre
     shipping_charges: Math.round(payload.shippingCharges),
     giftwrap_charges: 0,
     transaction_charges: 0,
+    // Callers pass subTotal already net of any coupon, so a discount here would
+    // come off a second time.
     total_discount: 0,
     length: Math.max(1, payload.lengthCm),
     breadth: Math.max(1, payload.breadthCm),

@@ -280,6 +280,10 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
     if (!shipment?.providerShipmentId) {
       const { first, last } = splitName(name);
       const reference = shipment?.providerReference ?? `SHK-${order.id.slice(0, 8).toUpperCase()}`;
+      // Number() first: a Prisma Decimal of 0 is an object, so a bare `||` would
+      // never reach the fallback that covers orders placed before itemsTotal.
+      const itemsTotal = Number(order.itemsTotal) || Number(order.totalAmount);
+      const discountTotal = Number(order.discountTotal ?? 0);
 
       const created = await createAdhocOrder({
         reference,
@@ -301,7 +305,11 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
           sellingPrice: Number(item.price),
           hsn: item.product.hsn ?? undefined,
         })),
-        subTotal: Number(order.itemsTotal || order.totalAmount),
+        // Net of any coupon, because sub_total is the one figure Shiprocket
+        // insures against and will collect at the door once COD exists. Sending
+        // it gross and the discount separately would put the courier's
+        // arithmetic between us and the cash.
+        subTotal: Math.max(0, itemsTotal - discountTotal),
         shippingCharges: Number(order.shippingAmount ?? 0),
         weightKg: cart.parcel.weightKg,
         lengthCm: cart.parcel.lengthCm,
