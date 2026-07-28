@@ -25,34 +25,44 @@ export interface SerializedProduct {
 /**
  * Turns a product row into something safe to send out.
  *
- * What this leaves out matters more than what it keeps. The catalogue
- * endpoints are public, so anything spread out of the row here is readable by
- * anyone who can reach the API. Cost price is therefore opt-in rather than
- * opt-out: a new private column added to the schema is dropped by default,
- * instead of quietly shipping to the storefront until someone notices.
+ * The catalogue endpoints are public, so this names the fields that may leave
+ * rather than the ones that may not. Naming what to strip means a new private
+ * column ships to the storefront until someone remembers to add it to the list,
+ * and a relation nobody thought of goes out whole. Cost price stays opt-in: a
+ * caller that forgets the flag shows a shopper too little, not too much.
  */
 export function serializeProduct(product: any, options?: { includeCost?: boolean }): SerializedProduct {
-  const {
-    costPrice,
-    // Relations the callers do not ask for are pulled out rather than spread.
-    coupons,
-    orderItems,
-    cartItems,
-    reviews,
-    wishlisted,
-    ...rest
-  } = product;
-
   const serialized: SerializedProduct = {
-    ...rest,
+    id: product.id,
+    name: product.name,
+    slug: product.slug,
+    description: product.description,
     price: Number(product.price),
     comparePrice: product.comparePrice != null ? Number(product.comparePrice) : null,
+    stock: product.stock,
+    images: product.images,
+    isActive: product.isActive,
     weightKg: Number(product.weightKg),
+    lengthCm: product.lengthCm,
+    breadthCm: product.breadthCm,
+    heightCm: product.heightCm,
+    hsn: product.hsn,
     gstRate: Number(product.gstRate ?? 0),
+    categoryId: product.categoryId,
+    createdAt: product.createdAt,
+    updatedAt: product.updatedAt,
   };
 
+  if (product.category) {
+    serialized.category = {
+      id: product.category.id,
+      name: product.category.name,
+      slug: product.category.slug,
+    };
+  }
+
   if (options?.includeCost) {
-    serialized.costPrice = costPrice != null ? Number(costPrice) : null;
+    serialized.costPrice = product.costPrice != null ? Number(product.costPrice) : null;
   }
 
   return serialized;

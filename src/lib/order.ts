@@ -1,46 +1,94 @@
+/** Only what an order line needs to name the thing that was bought. Never the
+ *  whole product row: an include that pulled one in would carry costPrice. */
+function serializeLineProduct(product: any) {
+  if (!product) return null;
+
+  return {
+    id: product.id,
+    name: product.name,
+    slug: product.slug,
+    images: product.images ?? [],
+  };
+}
+
+function serializeShipment(shipment: any) {
+  if (!shipment) return null;
+
+  return {
+    id: shipment.id,
+    orderId: shipment.orderId,
+    provider: shipment.provider,
+    providerOrderId: shipment.providerOrderId,
+    providerShipmentId: shipment.providerShipmentId,
+    providerReference: shipment.providerReference,
+    awb: shipment.awb,
+    courierId: shipment.courierId,
+    courierName: shipment.courierName,
+    labelUrl: shipment.labelUrl,
+    invoiceUrl: shipment.invoiceUrl,
+    manifestUrl: shipment.manifestUrl,
+    trackingUrl: shipment.trackingUrl,
+    status: shipment.status,
+    statusCode: shipment.statusCode,
+    appliedWeightKg: shipment.appliedWeightKg != null ? Number(shipment.appliedWeightKg) : null,
+    pickupScheduledAt: shipment.pickupScheduledAt,
+    pickupToken: shipment.pickupToken,
+    lastSyncedAt: shipment.lastSyncedAt,
+  };
+}
+
 /**
  * Turns an order row into something safe to send out.
  *
  * Customers read their own orders through the same endpoints the admin panel
- * uses, so what a line item costs us has to be dropped unless the caller is an
- * admin. Like serializeProduct, cost is opt-in rather than opt-out: forgetting
+ * uses, so this names the fields that may leave rather than the ones that may
+ * not. What a line cost us is the field that must not slip through, and naming
+ * it to strip it means the next private column added to Order or Product ships
+ * to customers until somebody notices. Cost stays opt-in: a caller that forgets
  * the flag shows a customer too little, not too much.
  */
 export function serializeOrder(order: any, options?: { includeCost?: boolean }) {
-  const { user, shipment, ...rest } = order;
+  const user = order.user;
 
   return {
-    ...rest,
+    id: order.id,
+    status: order.status,
+    paymentStatus: order.paymentStatus,
     itemsTotal: Number(order.itemsTotal ?? 0),
     shippingAmount: Number(order.shippingAmount ?? 0),
     discountTotal: Number(order.discountTotal ?? 0),
+    couponCode: order.couponCode ?? null,
     totalAmount: Number(order.totalAmount),
     taxTotal: Number(order.taxTotal ?? 0),
     cgstTotal: Number(order.cgstTotal ?? 0),
     sgstTotal: Number(order.sgstTotal ?? 0),
     igstTotal: Number(order.igstTotal ?? 0),
+    placeOfSupply: order.placeOfSupply ?? null,
+    courierId: order.courierId ?? null,
+    courierName: order.courierName ?? null,
+    shippingAddress: order.shippingAddress ?? null,
+    razorpayOrderId: order.razorpayOrderId ?? null,
+    razorpayPaymentId: order.razorpayPaymentId ?? null,
     customerEmail: order.email ?? user?.email ?? null,
     customerName:
       order.customerName ?? ([user?.firstName, user?.lastName].filter(Boolean).join(" ") || null),
-    items: (order.items ?? []).map((item: any) => {
-      const { costPrice, ...line } = item;
-
-      return {
-        ...line,
-        price: Number(item.price),
-        gstRate: Number(item.gstRate ?? 0),
-        taxableAmount: Number(item.taxableAmount ?? 0),
-        taxAmount: Number(item.taxAmount ?? 0),
-        ...(options?.includeCost
-          ? { costPrice: costPrice != null ? Number(costPrice) : null }
-          : {}),
-      };
-    }),
-    shipment: shipment
-      ? {
-          ...shipment,
-          appliedWeightKg: shipment.appliedWeightKg != null ? Number(shipment.appliedWeightKg) : null,
-        }
-      : null,
+    customerPhone: order.customerPhone ?? null,
+    createdAt: order.createdAt,
+    updatedAt: order.updatedAt,
+    items: (order.items ?? []).map((item: any) => ({
+      id: item.id,
+      orderId: item.orderId,
+      productId: item.productId,
+      quantity: item.quantity,
+      price: Number(item.price),
+      gstRate: Number(item.gstRate ?? 0),
+      taxableAmount: Number(item.taxableAmount ?? 0),
+      taxAmount: Number(item.taxAmount ?? 0),
+      product: serializeLineProduct(item.product),
+      ...(options?.includeCost
+        ? { costPrice: item.costPrice != null ? Number(item.costPrice) : null }
+        : {}),
+    })),
+    shipment: serializeShipment(order.shipment),
   };
 }
