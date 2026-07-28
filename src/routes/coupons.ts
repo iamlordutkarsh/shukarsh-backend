@@ -61,6 +61,42 @@ function checkCoupon(
 const couponSchema = couponFields.superRefine(checkCoupon);
 const couponUpdateSchema = couponFields.partial().superRefine(checkCoupon);
 
+/**
+ * A stored coupon in the shape the schema expects, so a patch can be validated
+ * against the coupon it will produce rather than only the fields that were
+ * resent. Decimals have to come back as numbers; the schema counts a
+ * Prisma.Decimal as neither a number nor absent.
+ */
+function couponAsInput(coupon: {
+  code: string;
+  description: string | null;
+  type: CouponType;
+  value: unknown;
+  maxDiscount: unknown;
+  minOrderValue: unknown;
+  usageLimit: number | null;
+  perUserLimit: number | null;
+  firstOrderOnly: boolean;
+  startsAt: Date | null;
+  expiresAt: Date | null;
+  isActive: boolean;
+}) {
+  return {
+    code: coupon.code,
+    description: coupon.description ?? undefined,
+    type: coupon.type,
+    value: Number(coupon.value),
+    maxDiscount: coupon.maxDiscount != null ? Number(coupon.maxDiscount) : undefined,
+    minOrderValue: Number(coupon.minOrderValue),
+    usageLimit: coupon.usageLimit,
+    perUserLimit: coupon.perUserLimit,
+    firstOrderOnly: coupon.firstOrderOnly,
+    startsAt: coupon.startsAt,
+    expiresAt: coupon.expiresAt,
+    isActive: coupon.isActive,
+  };
+}
+
 const applySchema = z.object({
   code: z.string().trim().min(1).max(40),
   items: z
@@ -199,6 +235,23 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 
   const id = req.params.id as string;
+  const existing = await prisma.coupon.findUnique({ where: { id } });
+
+  if (!existing) {
+    res.status(404).json({ error: "Coupon not found" });
+    return;
+  }
+
+  // checkCoupon keys off type, which is absent whenever the field is not
+  // resent, so on its own a partial parse skips the percent and flat checks
+  // entirely: PUT { value: 500 } against a PERCENT coupon would store 500% off.
+  // Validating the merge is what makes it see the type the coupon will have.
+  const merged = couponSchema.safeParse({ ...couponAsInput(existing), ...result.data });
+  if (!merged.success) {
+    res.status(400).json({ error: "Invalid input", details: merged.error.flatten() });
+    return;
+  }
+
   const { categoryIds, productIds, ...data } = result.data;
 
   try {
