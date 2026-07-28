@@ -272,7 +272,7 @@ cron path ignores the cooldown and always does the work.
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
 | GET | `/api/logistics/config` | Public | Whether live shipping is on |
-| POST | `/api/logistics/rates` | Public | Courier options for a cart and pincode |
+| POST | `/api/logistics/rates` | Public | Delivery fee and estimate for a cart and pincode |
 | GET | `/api/logistics/pincode/:pincode` | Public | City and state autofill |
 | GET | `/api/logistics/pickup-locations` | Admin | Pickup nicknames as Shiprocket sees them |
 | GET | `/api/logistics/orders/:id/rates` | Admin | Courier options for a placed order |

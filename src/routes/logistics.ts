@@ -10,7 +10,8 @@ import { expireAbandonedOrders } from "../lib/abandoned-orders";
 import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
-import { priceCart, quoteShipping } from "../lib/shipping";
+import { pickCourier, priceCart, quoteShipping } from "../lib/shipping";
+import { freeDeliveryShortfall, shippingFee } from "../lib/shipping-policy";
 import { createTtlCache } from "../lib/parcel";
 import {
   ShiprocketError,
@@ -96,26 +97,42 @@ router.post("/rates", async (req, res) => {
     return;
   }
 
-  if (!isShiprocketConfigured() || !pickupPincode()) {
-    res.json({ enabled: false, serviceable: true, options: [], freeShipping: true });
-    return;
-  }
-
   try {
     const cart = await priceCart(result.data.items);
+
+    // What delivery costs is the shop's policy and needs no courier, so it is
+    // answered even when Shiprocket is off. Per courier rates are deliberately
+    // not in here: the customer does not choose a courier, and publishing what
+    // each one charges us tells anyone with a pincode what our margins are.
+    const fee = shippingFee(cart.itemsTotal);
+    const delivery = {
+      weightKg: cart.parcel.weightKg,
+      shippingAmount: fee,
+      freeShipping: fee === 0,
+      shortfall: freeDeliveryShortfall(cart.itemsTotal),
+    };
+
+    if (!isShiprocketConfigured() || !pickupPincode()) {
+      res.json({ ...delivery, enabled: false, serviceable: true, etdDays: null, etd: null });
+      return;
+    }
+
     const quote = await quoteShipping({
       pincode: result.data.pincode,
       parcel: cart.parcel,
       declaredValue: cart.itemsTotal,
     });
+    const chosen = quote.options.length > 0 ? pickCourier(quote.options) : null;
 
     res.json({
+      ...delivery,
       enabled: true,
       serviceable: quote.serviceable,
-      weightKg: cart.parcel.weightKg,
-      options: quote.options.slice(0, 4),
+      // The courier we would book today, so the estimate matches the parcel that
+      // will actually be sent. Which courier that is stays ours to change.
+      etdDays: chosen?.etdDays ?? null,
+      etd: chosen?.etd ?? null,
       blocked: quote.blocked.slice(0, 3),
-      freeShipping: false,
     });
   } catch (error) {
     const statusCode = (error as { statusCode?: number }).statusCode;
