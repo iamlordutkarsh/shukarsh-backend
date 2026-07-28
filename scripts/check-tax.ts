@@ -10,6 +10,7 @@ process.env.GST_ENABLED = "true";
 
 import { computeTax, round2 } from "../src/lib/tax";
 import { allocateDiscount } from "../src/lib/coupon";
+import { collapseLines } from "../src/lib/shipping";
 
 let failures = 0;
 
@@ -133,6 +134,34 @@ check(
   "a targeted discount leaves the other rate's tax alone",
   mixedDiscount.lines[1].tax,
   round2(500 - 500 / 1.05)
+);
+
+// --- The bag itself, before any of the above sees it ---
+
+// Stock is checked per line, so the same product twice has to become one line or
+// 5 and 5 both pass against a stock of 8.
+check(
+  "a repeated product becomes one line",
+  collapseLines([
+    { productId: "a", quantity: 5 },
+    { productId: "b", quantity: 1 },
+    { productId: "a", quantity: 5 },
+  ]),
+  [
+    { productId: "a", quantity: 10 },
+    { productId: "b", quantity: 1 },
+  ]
+);
+check(
+  "a bag with nothing repeated is left as it is",
+  collapseLines([
+    { productId: "a", quantity: 2 },
+    { productId: "b", quantity: 3 },
+  ]),
+  [
+    { productId: "a", quantity: 2 },
+    { productId: "b", quantity: 3 },
+  ]
 );
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);

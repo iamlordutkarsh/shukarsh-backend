@@ -38,9 +38,29 @@ export interface PricedCart {
   parcel: Parcel;
 }
 
+/**
+ * One entry per product, quantities added up.
+ *
+ * The bag arrives as an array and /api/orders/create is public, so the same
+ * product can turn up in it twice. Checked line by line, 5 and 5 both pass
+ * against a stock of 8 and the order oversells by two. Nothing downstream
+ * minds: tax and discounts are mapped by line position against the lines
+ * priceCart returns, which are these.
+ */
+export function collapseLines(items: CartLine[]): CartLine[] {
+  const quantities = new Map<string, number>();
+
+  for (const item of items) {
+    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
+  }
+
+  return [...quantities].map(([productId, quantity]) => ({ productId, quantity }));
+}
+
 /** Prices and weights always come from the database, never from the client. */
-export async function priceCart(items: CartLine[]): Promise<PricedCart> {
-  const ids = Array.from(new Set(items.map((item) => item.productId)));
+export async function priceCart(cartItems: CartLine[]): Promise<PricedCart> {
+  const items = collapseLines(cartItems);
+  const ids = items.map((item) => item.productId);
   const products = await prisma.product.findMany({
     where: { id: { in: ids }, isActive: true },
     select: {
