@@ -169,12 +169,19 @@ which lines the money comes off changes what is owed. The discount is applied
 before tax is worked out, because GST is due on what the customer actually pays.
 
 Redemptions are booked when an order is confirmed, not when it is placed, so an
-abandoned checkout costs a limited code nothing. The count is incremented
+abandoned checkout never eats into a code's total count. The count is incremented
 unconditionally at that point: by then the money has been taken, and refusing to
-record it would leave a discount charged but unaccounted for. Limits are
-enforced where they can still be honoured, when the code is applied and again
-before payment starts, so a busy limited code can overshoot its cap by a use or
-two under concurrent checkouts.
+record it would leave a discount charged but unaccounted for.
+
+The per-customer limit counts orders that are still awaiting payment as well as
+recorded redemptions. Without that, five unpaid checkouts each carrying a
+one-per-person code can all be paid afterwards and the code has been used five
+times. The price of closing that is that an abandoned checkout holds that
+customer's use of the code until the order is cancelled.
+
+`usageLimit` is enforced where it can still be honoured, when the code is applied
+and again before payment starts, so a busy limited code can overshoot its cap by
+a use or two under concurrent checkouts.
 
 Deleting a code that has been used switches it off instead. Redemptions are what
 evidences an order's discount, and deleting the coupon would cascade them away.

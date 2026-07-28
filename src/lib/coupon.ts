@@ -103,7 +103,16 @@ async function redemptionCount(
   const identity = userId ? { userId } : email ? { email: email.toLowerCase() } : null;
   if (!identity) return 0;
 
-  return prisma.couponRedemption.count({ where: { couponId, ...identity } });
+  // Orders still waiting to be paid count as well. A redemption is only booked
+  // once the money arrives, so counting redemptions alone lets someone run
+  // checkout five times, sit on five PENDING orders each carrying the code, and
+  // then pay all five. No race needed and no limit reached.
+  const [redeemed, held] = await Promise.all([
+    prisma.couponRedemption.count({ where: { couponId, ...identity } }),
+    prisma.order.count({ where: { couponId, ...identity, paymentStatus: "PENDING" } }),
+  ]);
+
+  return redeemed + held;
 }
 
 async function hasEarlierOrder(
@@ -228,8 +237,8 @@ export async function evaluateCoupon(
 
 /**
  * Books a redemption against an order at the moment it is confirmed, rather
- * than when it was merely placed, so an abandoned checkout costs a limited code
- * nothing.
+ * than when it was merely placed, so an abandoned checkout never eats into a
+ * code's total count.
  *
  * The count goes up unconditionally and on purpose. By the time this runs the
  * customer has paid the discounted amount, so the redemption is a fact whether
