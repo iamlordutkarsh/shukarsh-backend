@@ -184,7 +184,16 @@ export async function evaluateCoupon(
   }
 
   if (coupon.firstOrderOnly && (await hasEarlierOrder(context.userId, context.email))) {
-    return { ok: false, reason: "That code is only for a first order." };
+    // Naming the reason to a caller who is not signed in turns any live
+    // first-order code into a way of asking whether an address has shopped
+    // here, one address at a time. A signed-in customer can only be asking
+    // about themselves, so they get the answer that actually helps.
+    return {
+      ok: false,
+      reason: context.userId
+        ? "That code is only for a first order."
+        : "That code cannot be used on this order.",
+    };
   }
 
   const indexes = eligibleIndexes(coupon, context.lines);
