@@ -28,6 +28,31 @@ enum PaymentStatus {
   REFUNDED
 }
 
+/// Why a parcel is coming back. Only faults on our side are accepted: nails and
+/// kitchen goods cannot be resold once opened, so change of mind is not offered.
+enum ReturnReason {
+  DAMAGED
+  WRONG_ITEM
+}
+
+/// What the customer asked us to do about it.
+enum ReturnOutcome {
+  REFUND
+  EXCHANGE
+}
+
+enum ReturnStatus {
+  REQUESTED
+  APPROVED
+  REJECTED
+  /// The goods are back with us and have been looked at.
+  RECEIVED
+  /// Refunded or replaced; nothing further is owed.
+  COMPLETED
+  /// Withdrawn by the customer before we decided.
+  WITHDRAWN
+}
+
 enum CouponType {
   PERCENT
   FLAT
@@ -51,6 +76,7 @@ model User {
   reviews     Review[]
   wishlist    WishlistItem[]
   redemptions CouponRedemption[]
+  returns     ReturnRequest[]
 }
 
 model Address {
@@ -179,8 +205,57 @@ model Order {
   items             OrderItem[]
   shipment          Shipment?
   redemption        CouponRedemption?
+  returns           ReturnRequest[]
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
+}
+
+/// A customer asking to send something back.
+///
+/// Separate from the order's own status because the two run on different clocks:
+/// an order is Delivered and stays Delivered while a return against it is still
+/// being decided. The order only becomes Returned once the goods are actually
+/// back, which is what puts the stock on the shelf.
+model ReturnRequest {
+  id         String        @id @default(uuid())
+  orderId    String
+  order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  /// Who asked. Null when the shop raised it on a guest's behalf.
+  userId     String?
+  user       User?         @relation(fields: [userId], references: [id])
+  reason     ReturnReason
+  outcome    ReturnOutcome
+  status     ReturnStatus  @default(REQUESTED)
+  /// The customer's own words. Required: "damaged" alone cannot be judged.
+  customerNote String
+  /// Why we approved or refused, shown to the customer.
+  adminNote  String?
+  /// What this request was worth when it was decided, apportioned from what was
+  /// actually paid. Frozen at approval so a later price change cannot move it.
+  refundAmount Decimal?    @db.Decimal(10, 2)
+  items      ReturnItem[]
+  decidedAt  DateTime?
+  receivedAt DateTime?
+  completedAt DateTime?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  @@index([status])
+  @@index([orderId])
+}
+
+model ReturnItem {
+  id              String        @id @default(uuid())
+  returnRequestId String
+  returnRequest   ReturnRequest @relation(fields: [returnRequestId], references: [id], onDelete: Cascade)
+  orderItemId     String
+  orderItem       OrderItem     @relation(fields: [orderItemId], references: [id])
+  quantity        Int
+  /// Decided when the parcel is opened. A soaked dress goes back to nobody, so
+  /// restocking is a choice rather than something a status change assumes.
+  resellable      Boolean?
+
+  @@unique([returnRequestId, orderItemId])
 }
 
 model Shipment {
@@ -228,6 +303,7 @@ model OrderItem {
   /// reason as the rate: renegotiating with a supplier must not quietly
   /// rewrite the profit on orders that already shipped.
   costPrice     Decimal? @db.Decimal(10, 2)
+  returnItems   ReturnItem[]
   createdAt DateTime @default(now())
 }
 
