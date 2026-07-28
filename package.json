@@ -11,6 +11,7 @@
     "postinstall": "prisma generate",
     "lint": "eslint . --ext .ts",
     "check:tax": "ts-node scripts/check-tax.ts",
+    "rates:survey": "ts-node scripts/shipping-rates.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",
