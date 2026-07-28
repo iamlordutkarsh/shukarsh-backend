@@ -82,6 +82,10 @@ const off = computeTax({
 check("GST is off without a seller state", off.enabled, false);
 check("nothing is taxed when it is off", off.taxTotal, 0);
 check("the total still adds up when it is off", off.taxableTotal, 1349);
+// The order rows are written from these lines, so a rate left on one would say
+// tax was due and none was collected.
+check("no rate is reported when it is off", off.lines[0].rate, 0);
+check("the line is fully taxable value when it is off", off.lines[0].taxable, 1299);
 
 // --- Discounts, and the way they drag GST down with them ---
 process.env.SELLER_STATE = "Delhi";

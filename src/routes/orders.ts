@@ -217,7 +217,9 @@ router.post("/create", async (req, res) => {
             productId: line.productId,
             quantity: line.quantity,
             price: line.price,
-            gstRate: line.gstRate,
+            // The rate tax was actually worked out at, not the product's, so a
+            // row never claims a rate applied while recording no tax.
+            gstRate: tax.lines[index]?.rate ?? line.gstRate,
             taxableAmount: tax.lines[index]?.taxable ?? line.gross,
             taxAmount: tax.lines[index]?.tax ?? 0,
             // Snapshotted for the same reason as the rate: renegotiating with a

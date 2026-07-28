@@ -132,7 +132,10 @@ export function computeTax(params: {
       sgstTotal: 0,
       igstTotal: 0,
       shippingTax: 0,
-      lines: params.lines.map((line) => ({ ...line, taxable: round2(line.gross), tax: 0 })),
+      // The rate is zeroed rather than carried through. These lines are what an
+      // order stores, and "5% applicable, ₹0 collected" is indistinguishable
+      // from a rounding bug when someone reconciles it later.
+      lines: params.lines.map((line) => ({ ...line, rate: 0, taxable: round2(line.gross), tax: 0 })),
       buckets: [],
     };
   }
