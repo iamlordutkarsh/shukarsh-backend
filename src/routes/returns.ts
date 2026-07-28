@@ -20,6 +20,8 @@ const adminInclude = {
   order: {
     include: {
       items: true,
+      // The other returns on the order, to see whether this one finishes it off.
+      returns: { select: { id: true, status: true, items: { select: { orderItemId: true, quantity: true } } } },
       user: { select: { email: true } },
     },
   },
@@ -173,15 +175,38 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-/** Whether this one request accounts for every unit on the order. */
+/**
+ * Whether every unit on the order has now come back.
+ *
+ * Counted across all the returns that reached us, not just this one: a customer
+ * who sends back one dress in March and the other in April has still returned
+ * the whole order by April, and the order should say so.
+ */
 function coversWholeOrder(request: {
+  id: string;
   items: { orderItemId: string; quantity: number }[];
-  order: { items: { id: string; quantity: number }[] };
+  order: {
+    items: { id: string; quantity: number }[];
+    returns: { id: string; status: string; items: { orderItemId: string; quantity: number }[] }[];
+  };
 }): boolean {
-  return request.order.items.every((line) => {
-    const returned = request.items.find((item) => item.orderItemId === line.id);
-    return returned?.quantity === line.quantity;
-  });
+  const back = new Map<string, number>();
+
+  const add = (items: { orderItemId: string; quantity: number }[]) => {
+    for (const item of items) {
+      back.set(item.orderItemId, (back.get(item.orderItemId) ?? 0) + item.quantity);
+    }
+  };
+
+  for (const other of request.order.returns) {
+    // This one was read before the update, so its own row still says APPROVED.
+    if (other.id === request.id) continue;
+    if (other.status !== "RECEIVED" && other.status !== "COMPLETED") continue;
+    add(other.items);
+  }
+  add(request.items);
+
+  return request.order.items.every((line) => (back.get(line.id) ?? 0) >= line.quantity);
 }
 
 export default router;
