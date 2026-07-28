@@ -167,14 +167,34 @@ export interface ResolvedShipping {
   quoted: boolean;
 }
 
-/** Who carries the parcel. The customer does not choose this, the shop does. */
+/**
+ * The cheapest courier that still gets there in reasonable time.
+ *
+ * Shiprocket's own `recommended` flag is not costed. Bareilly to Lucknow, half a
+ * kilo: ₹55 with the cheapest courier and ₹96 recommended, and across 33
+ * pincodes the recommendation ran ₹57 over the cheapest on a median parcel and
+ * ₹107 on a kilo (`npm run rates:survey`). Since the customer no longer picks a
+ * courier and delivery is on the shop, that difference was pure loss.
+ *
+ * The cap is what stops "cheapest" turning into "eventually": below it, price
+ * decides, and if nothing is inside it we take the cheapest anyway rather than
+ * refuse the order. An admin's explicit choice always wins.
+ */
 export function pickCourier(options: CourierOption[], preferredCourierId?: number): CourierOption {
   if (preferredCourierId) {
     const preferred = options.find((option) => option.courierId === preferredCourierId);
     if (preferred) return preferred;
   }
 
-  return options.find((option) => option.recommended) ?? options[0];
+  const cap = positiveInt(process.env.SHIPPING_MAX_ETD_DAYS, 7);
+
+  // getServiceability sorts by rate, so the first match is the cheapest one.
+  return options.find((option) => option.etdDays == null || option.etdDays <= cap) ?? options[0];
+}
+
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const value = Number(raw);
+  return Number.isInteger(value) && value > 0 ? value : fallback;
 }
 
 /**

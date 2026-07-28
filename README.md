@@ -219,6 +219,12 @@ the fee. What the courier charges is still worth knowing before you move these
 numbers: `npm run rates:survey` quotes real rates across 33 pincodes and prints
 the median and p90 to set them from.
 
+Since the shop pays for delivery, it also books it. We take the cheapest courier
+promising delivery within `SHIPPING_MAX_ETD_DAYS` (7 by default) rather than
+Shiprocket's `recommended` one, which is chosen on rating and ran ₹57 over the
+cheapest on a median parcel. An admin picking a courier by hand on the order
+overrides that.
+
 ### Shiprocket
 
 Shipping is optional. With no Shiprocket credentials set the store still takes
