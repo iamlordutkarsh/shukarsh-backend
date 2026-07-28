@@ -207,6 +207,29 @@ with Resend). Leave them unset and the store behaves exactly as before, just
 without email. A send that fails is logged and never blocks a payment or a
 shipment.
 
+### Returns
+
+A customer can open a return from their own order page for
+`RETURN_WINDOW_DAYS` (7 by default) after delivery, which is counted from
+`Order.deliveredAt`, written the first time an order is seen delivered and never
+moved after that. Only two reasons are accepted, damaged and wrong item: nails
+and kitchen pieces cannot be resold once opened, so change of mind is not
+offered. Orders delivered before that column existed have no date to count from
+and are handed to a human rather than refused.
+
+The request lands in `/admin/returns`, where it is approved or refused with a
+note the customer is emailed word for word. What it is worth is apportioned from
+what was actually paid, not from the sticker price: `OrderItem.taxableAmount +
+taxAmount` is the line net of its share of any coupon, so a bag with ₹300 off
+does not refund a third of that discount twice. Delivery is only refunded when
+nothing is being kept. `npm run check:tax` asserts all of it.
+
+Marking the parcel received asks per item whether it can be sold again, and only
+those units go back into stock. A return covering every unit of the order also
+moves the order itself to Returned. Refunds are not automated yet: the queue
+shows the Razorpay payment id to refund against, and closing a return emails the
+customer.
+
 ### What delivery costs the customer
 
 The shop's own policy, not the courier's rate: free at or above
