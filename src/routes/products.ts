@@ -1,4 +1,4 @@
-import { Router } from "express";
+import { Router, type NextFunction, type Request, type Response } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { serializeProduct, serializeProducts } from "../lib/product";
@@ -50,7 +50,19 @@ const sortOptions = {
 
 type SortKey = keyof typeof sortOptions;
 
-router.get("/", async (req, res) => {
+/**
+ * These reads answer differently for an admin, who gets costPrice back. The only
+ * thing telling the two bodies apart is a request header, so the response has to
+ * say so: a CDN or proxy keying on the URL alone would otherwise be free to
+ * store an admin's answer and serve supplier costs to shoppers.
+ */
+function perCaller(_req: Request, res: Response, next: NextFunction) {
+  res.vary("Authorization");
+  res.setHeader("Cache-Control", "private, no-store");
+  next();
+}
+
+router.get("/", perCaller, async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.max(1, Math.min(50, Number(req.query.limit) || 12));
   const categoryId = req.query.categoryId as string | undefined;
@@ -86,9 +98,9 @@ router.get("/", async (req, res) => {
   });
 });
 
-router.get("/:slug", async (req, res) => {
+router.get("/:slug", perCaller, async (req, res) => {
   const product = await prisma.product.findUnique({
-    where: { slug: req.params.slug },
+    where: { slug: req.params.slug as string },
     include: { category: { select: { id: true, name: true, slug: true } } },
   });
 
