@@ -313,6 +313,17 @@ model ReturnRequest {
   /// What this request was worth when it was decided, apportioned from what was
   /// actually paid. Frozen at approval so a later price change cannot move it.
   refundAmount Decimal?    @db.Decimal(10, 2)
+  /// Razorpay's id for the money going back, and the proof it went. Unique, so
+  /// the database itself refuses to record a second refund against one return
+  /// even if every check above it were somehow skipped.
+  refundId   String?       @unique
+  refundedAt DateTime?
+  /// What Razorpay last said: pending, processed or failed. A refund is not
+  /// finished when the call returns, only accepted.
+  refundStatus String?
+  /// Why the last attempt did not work, kept so the next person can see what
+  /// happened without going through the logs.
+  refundError String?
   items      ReturnItem[]
   decidedAt  DateTime?
   receivedAt DateTime?
