@@ -207,6 +207,33 @@ with Resend). Leave them unset and the store behaves exactly as before, just
 without email. A send that fails is logged and never blocks a payment or a
 shipment.
 
+### Stock
+
+`Product.stock` is still the number that decides whether something can be sold,
+because the conditional decrement on it is what stops two people being sold the
+same last item. Beside it, `StockMove` records every movement and why: a sale, a
+cancellation, a reopened order, a resellable return, a delivery arriving, a
+recount, a write-off. Everything goes through `moveStock()` in
+`src/lib/inventory.ts`, in the same transaction as whatever caused it, so the
+shelf and the reason for it can never disagree.
+
+Adjustments from the admin panel post a difference rather than a total. A form
+that posts "there are now 12" throws away any sale that happened while it was
+open; `POST /api/products/:id/stock` takes `delta` and cannot. The product form
+still accepts an absolute number, and records the difference as a recount.
+
+`npm run check:stock` compares every product against the sum of its ledger and
+exits non-zero on any disagreement. It needs a database, so it is a diagnostic
+rather than part of the build. Products that existed before the ledger were given
+an opening balance by its migration, so the sums start out true.
+
+Each product carries its own `lowStockThreshold` (5 by default). Anything at or
+below it counts as needing a reorder, which drives the badge in the catalogue, the
+dashboard count, the "only a few left" line on the storefront, and a digest email
+sent once a day at `LOW_STOCK_DIGEST_HOUR` (9am IST). The day it last ran is kept
+in `SystemFlag`, so a host that redeploys or wakes from sleep does not send the
+same list four times.
+
 ### Returns
 
 A customer can open a return from their own order page for
