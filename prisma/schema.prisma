@@ -77,6 +77,7 @@ model User {
   wishlist    WishlistItem[]
   redemptions CouponRedemption[]
   returns     ReturnRequest[]
+  stockMoves  StockMove[]
 }
 
 model Address {
@@ -117,6 +118,9 @@ model Product {
   price        Decimal  @db.Decimal(10, 2)
   comparePrice Decimal? @db.Decimal(10, 2)
   stock        Int      @default(0)
+  /// Stock at or below this counts as needing a reorder. Per product because a
+  /// set of plates and a packet of nails do not sell at the same rate.
+  lowStockThreshold Int @default(5)
   images       String[]
   isActive     Boolean  @default(true)
   weightKg     Decimal  @default(0.5) @db.Decimal(6, 3)
@@ -140,6 +144,68 @@ model Product {
   reviews    Review[]
   wishlisted WishlistItem[]
   coupons    CouponProduct[]
+  stockMoves StockMove[]
+}
+
+/// Why the number on the shelf changed.
+enum StockMoveReason {
+  /// Opening quantity, set when the product was added.
+  INITIAL
+  /// A paid order took units.
+  SALE
+  /// An order was called off and its units came back.
+  CANCELLATION
+  /// A cancelled order was reopened and took its units again.
+  REOPEN
+  /// A returned parcel was judged sellable again.
+  RETURN_RESTOCK
+  /// New stock arrived.
+  RECEIVED
+  /// Counted the shelf and the number was wrong.
+  CORRECTION
+  /// Broken, lost or written off.
+  DAMAGE
+}
+
+/// One movement of stock, and why.
+///
+/// Product.stock stays the truth: the conditional decrement on it is what stops
+/// two customers being sold the same last dress, and summing this table on every
+/// read would be slower and racier. This is the record beside it, so a number
+/// nobody expects can be explained instead of argued about.
+model StockMove {
+  id        String          @id @default(uuid())
+  productId String
+  product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Signed. Positive puts units on the shelf, negative takes them off.
+  delta     Int
+  /// What the shelf held once this had been applied, so history reads without
+  /// re-summing everything before it, and a drift check has something to compare.
+  balance   Int
+  reason    StockMoveReason
+  /// Free text from whoever adjusted it by hand.
+  note      String?
+  /// Null when nobody did it: a payment landing or a courier scan moves stock
+  /// with no admin in the room.
+  userId    String?
+  user      User?           @relation(fields: [userId], references: [id])
+  orderId   String?
+  order     Order?          @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  createdAt DateTime        @default(now())
+
+  @@index([productId, createdAt])
+  @@index([createdAt])
+}
+
+/// Small key/value bookkeeping the shop needs and nothing else owns.
+///
+/// Exists so "have we already done this today" survives a restart. A free host
+/// redeploys and sleeps often, and without somewhere durable to write it, a daily
+/// email becomes an email every time the process comes up.
+model SystemFlag {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
 }
 
 model Cart {
@@ -206,6 +272,7 @@ model Order {
   shipment          Shipment?
   redemption        CouponRedemption?
   returns           ReturnRequest[]
+  stockMoves        StockMove[]
   createdAt         DateTime      @default(now())
   updatedAt         DateTime      @updatedAt
 }

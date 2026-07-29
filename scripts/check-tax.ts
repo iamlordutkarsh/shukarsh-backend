@@ -13,6 +13,7 @@ import { allocateDiscount } from "../src/lib/coupon";
 import { collapseLines } from "../src/lib/shipping";
 import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
 import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/returns";
+import { balanceFrom, isLowStock } from "../src/lib/inventory";
 
 let failures = 0;
 
@@ -348,6 +349,16 @@ check(
     delivered({ returns: [{ status: "REJECTED", items: [{ orderItemId: "l1", quantity: 2 }] }] })
   ).available,
   { l1: 2 }
+);
+
+check("stock at the reorder level counts as low", isLowStock({ stock: 5, lowStockThreshold: 5 }), true);
+check("one above it does not", isLowStock({ stock: 6, lowStockThreshold: 5 }), false);
+check("a product with its own level uses it", isLowStock({ stock: 12, lowStockThreshold: 20 }), true);
+check("an empty shelf is always low", isLowStock({ stock: 0 }), true);
+check(
+  "a ledger adds up to what the shelf should hold",
+  balanceFrom([{ delta: 10 }, { delta: -3 }, { delta: 2 }, { delta: -1 }]),
+  8
 );
 
 check("a damage claim has to come with a photo", photoRequired("DAMAGED"), true);
