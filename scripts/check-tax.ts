@@ -14,6 +14,7 @@ import { collapseLines } from "../src/lib/shipping";
 import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
 import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/returns";
 import { balanceFrom, isLowStock } from "../src/lib/inventory";
+import { marginOf, shopDayStart, windowDays } from "../src/lib/analytics";
 
 let failures = 0;
 
@@ -350,6 +351,19 @@ check(
   ).available,
   { l1: 2 }
 );
+
+// A ₹1000 sale at 5% GST is ₹952.38 of sales and ₹47.62 of tax. Counting the tax
+// as profit is the classic way a margin figure comes out flattering and wrong.
+check("margin is worked out on sales net of GST", marginOf(952.38, 500).profit, 452.38);
+check("and the percentage with it", marginOf(952.38, 500).percent, 47.5);
+check("nothing sold is not a loss", marginOf(0, 0).percent, 0);
+check(
+  "a shop day starts at midnight in Delhi",
+  shopDayStart(0, new Date("2026-07-29T02:00:00Z")).toISOString(),
+  "2026-07-28T18:30:00.000Z"
+);
+check("an unknown window falls back to a month", windowDays("999"), 30);
+check("a known one is kept", windowDays("7"), 7);
 
 check("stock at the reorder level counts as low", isLowStock({ stock: 5, lowStockThreshold: 5 }), true);
 check("one above it does not", isLowStock({ stock: 6, lowStockThreshold: 5 }), false);
