@@ -219,6 +219,26 @@ with Resend). Leave them unset and the store behaves exactly as before, just
 without email. A send that fails is logged and never blocks a payment or a
 shipment.
 
+### Accounts
+
+One address is one account, however it was typed. Every route that takes an email
+parses it through `emailField`, which trims and lowercases before it validates,
+so what gets stored is what the next sign-in will search for. Sign-in used to
+compare addresses exactly, which made `Priya@gmail.com` and `priya@gmail.com` two
+people with their orders split between them.
+
+The migration lowercased every address that could be lowercased without landing
+on another row, and deliberately stopped at pairs that differ only by case, since
+merging two accounts means choosing whose orders and whose password survive.
+`npm run check:emails` lists any that are left, with order counts to show which
+one is the real one. Sign-in still reaches those rows by falling back to a
+case-insensitive lookup, oldest first, and quietly rewrites the address to
+lowercase once its owner has proved it is theirs.
+
+Once `check:emails` reports nothing, a unique index on `lower("email")` should be
+added to make the rule structural. It is not there yet because creating it fails
+if any duplicate still exists, and a failed migration is a failed deploy.
+
 ### Stock
 
 `Product.stock` is still the number that decides whether something can be sold,

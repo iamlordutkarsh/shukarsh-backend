@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "check:tax": "ts-node scripts/check-tax.ts",
     "check:stock": "ts-node scripts/check-stock.ts",
+    "check:emails": "ts-node scripts/check-emails.ts",
     "rates:survey": "ts-node scripts/shipping-rates.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
