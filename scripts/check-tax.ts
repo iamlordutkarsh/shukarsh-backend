@@ -17,6 +17,7 @@ import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/re
 import { balanceFrom, isLowStock } from "../src/lib/inventory";
 import { dailySeries, marginOf, shopDayOf, shopDayStart, windowDays } from "../src/lib/analytics";
 import { recoveryPath, recoveryTokenMatches } from "../src/lib/cart-recovery";
+import { toPaise } from "../src/lib/refunds";
 
 let failures = 0;
 
@@ -388,6 +389,13 @@ const quiet = dailySeries(
 check("a quiet day is a zero, not a missing bar", quiet.length, 3);
 check("and the day with a sale carries it", quiet[2]?.revenue, 500);
 check("while the others sit at nothing", quiet[0]?.revenue, 0);
+
+// Razorpay counts in paise and rejects fractions, and 452.38 * 100 comes to
+// 45237.999999999996 in binary floating point. Truncating that short-pays the
+// customer by a paisa, which is both wrong and the sort of wrong nobody notices.
+check("a refund of 452.38 is 45238 paise", toPaise(452.38), 45238);
+check("and 1299.99 does not lose a paisa", toPaise(1299.99), 129999);
+check("a whole rupee amount is exact", toPaise(500), 50000);
 
 // A recovery link is the only way into an order without signing in, so the
 // signature on it has to be the thing that decides, not the order id.

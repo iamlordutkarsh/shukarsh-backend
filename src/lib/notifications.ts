@@ -289,7 +289,15 @@ export async function sendReturnCompleted(returnId: string): Promise<void> {
             } against order <strong>${ref}</strong>. Banks take a few working days to show it, and it goes back to the card or account you paid with.`
           : `A replacement for order <strong>${ref}</strong> is being packed. You will get tracking as soon as it leaves us.`,
         `<table style="width:100%;border-collapse:collapse">${returnRows(request.items)}</table>
-         ${request.adminNote ? noteBlock("Note from us", request.adminNote) : ""}`
+         ${request.adminNote ? noteBlock("Note from us", request.adminNote) : ""}
+         ${
+           refunded && request.refundId
+             ? `<p style="margin:20px 0 0;font-size:12px;line-height:1.6;color:#9a94ad">
+                  Reference <strong style="color:#2c2440">${escapeHtml(request.refundId)}</strong>.
+                  Quote it to your bank if the money has not appeared within seven working days.
+                </p>`
+             : ""
+         }`
       ),
     });
   } catch (error) {

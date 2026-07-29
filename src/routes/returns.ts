@@ -12,6 +12,7 @@ import {
   returnInclude,
   serializeAdminReturn,
 } from "../lib/returns";
+import { RefundError, issueRefund } from "../lib/refunds";
 import { handleWriteError } from "../lib/write-errors";
 
 const router = Router();
@@ -176,6 +177,97 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
       missing: "Return not found",
       fallback: "Could not update this return",
     });
+  }
+});
+
+/**
+ * Sends the money back for a return whose goods have arrived.
+ *
+ * Its own action rather than a side effect of closing the return, so nothing
+ * leaves the account without somebody meaning it. Safe to press again: the return
+ * id is the idempotency key at Razorpay's end, and refundId is unique at ours.
+ *
+ * The refund is what closes the return, since that is what the customer was
+ * promised. An exchange has no money in it and is closed by hand as before.
+ */
+router.post("/:id/refund", authenticate, requireAdmin, async (req, res) => {
+  const id = req.params.id as string;
+  const request = await prisma.returnRequest.findUnique({ where: { id }, include: adminInclude });
+
+  if (!request) {
+    res.status(404).json({ error: "Return not found" });
+    return;
+  }
+
+  if (request.refundId) {
+    res.status(409).json({ error: "This return has already been refunded." });
+    return;
+  }
+
+  if (request.outcome !== "REFUND") {
+    res.status(400).json({ error: "This return was agreed as an exchange, so there is nothing to refund." });
+    return;
+  }
+
+  // The goods have to be back first. Approving a return is a promise; paying for
+  // one before it arrives is a donation.
+  if (request.status !== "RECEIVED" && request.status !== "COMPLETED") {
+    res.status(409).json({ error: "Mark the parcel as received before sending any money back." });
+    return;
+  }
+
+  const paymentId = request.order.razorpayPaymentId;
+  if (!paymentId) {
+    res.status(400).json({
+      error: "No Razorpay payment is recorded against this order, so it has to be refunded by hand.",
+    });
+    return;
+  }
+
+  // The figure frozen at approval, not one worked out again now: a price change
+  // since then must not move what this customer is owed.
+  const amount = Number(request.refundAmount ?? 0);
+  if (amount <= 0) {
+    res.status(400).json({ error: "This return has no refund amount on it." });
+    return;
+  }
+
+  try {
+    const refund = await issueRefund({
+      returnId: id,
+      paymentId,
+      amountRupees: amount,
+      orderReference: request.orderId.slice(0, 8).toUpperCase(),
+    });
+
+    const now = new Date();
+    const updated = await prisma.returnRequest.update({
+      where: { id },
+      data: {
+        refundId: refund.id,
+        refundedAt: now,
+        refundStatus: refund.status,
+        refundError: null,
+        ...(request.status === "RECEIVED" ? { status: "COMPLETED", completedAt: now } : {}),
+      },
+      include: adminInclude,
+    });
+
+    if (request.status === "RECEIVED") void sendReturnCompleted(id);
+
+    res.json({ return: serializeAdminReturn(updated) });
+  } catch (error) {
+    const failure =
+      error instanceof RefundError ? error : new RefundError("Could not send the refund", 500, true);
+
+    // Recorded on the return rather than only logged, so whoever looks next can
+    // see what happened. The refund id stays empty, so the button stays available.
+    await prisma.returnRequest
+      .update({ where: { id }, data: { refundError: failure.message } })
+      .catch(() => undefined);
+
+    console.error(`Refund failed for return ${id}:`, error);
+    res.status(failure.retryable ? 502 : 400).json({ error: failure.message });
   }
 });
 

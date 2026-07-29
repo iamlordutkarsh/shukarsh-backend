@@ -239,6 +239,8 @@ export function serializeReturn(request: any) {
     photos: request.photos ?? [],
     adminNote: request.adminNote ?? null,
     refundAmount: request.refundAmount != null ? Number(request.refundAmount) : null,
+    refundedAt: request.refundedAt ?? null,
+    refundStatus: request.refundStatus ?? null,
     items: (request.items ?? []).map((item: any) => ({
       id: item.id,
       orderItemId: item.orderItemId,
@@ -280,6 +282,9 @@ export function serializeAdminReturn(request: any) {
     ...serializeReturn(request),
     /** What it would be worth if decided now. refundAmount is the frozen figure. */
     proposedRefund: proposed.total,
+    /** Razorpay's reference, and why the last attempt failed. Staff only. */
+    refundId: request.refundId ?? null,
+    refundError: request.refundError ?? null,
     order: {
       id: order.id,
       status: order.status,
