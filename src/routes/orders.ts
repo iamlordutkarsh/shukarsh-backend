@@ -13,7 +13,15 @@ import { serializeOrder } from "../lib/order";
 import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
 import { InsufficientStockError, applyOrderStatus } from "../lib/order-status";
 import { sendOrderConfirmation, sendReturnRequested } from "../lib/notifications";
-import { returnBlockMessage, returnEligibility, returnInclude, serializeReturn } from "../lib/returns";
+import {
+  RETURN_PHOTO_LIMIT,
+  photoRequired,
+  returnBlockMessage,
+  returnEligibility,
+  returnInclude,
+  serializeReturn,
+} from "../lib/returns";
+import { isCustomerUpload } from "../lib/storage";
 import { handleWriteError } from "../lib/write-errors";
 
 const router = Router();
@@ -75,6 +83,13 @@ const returnRequestSchema = z.object({
   // Required, and long enough to be a sentence. "Damaged" on its own cannot be
   // judged without writing back to ask what was damaged.
   note: z.string().trim().min(10).max(1000),
+  // Only URLs our own uploader handed out. A browser decides what lands here, so
+  // without this check the admin queue would happily render any address on the
+  // internet, and evidence we do not host can be swapped after we have judged it.
+  photos: z
+    .array(z.string().url().refine(isCustomerUpload, "That photo was not uploaded here"))
+    .max(RETURN_PHOTO_LIMIT)
+    .default([]),
   items: z
     .array(
       z.object({
@@ -475,6 +490,13 @@ router.post("/:id/returns", authenticate, async (req, res) => {
     return;
   }
 
+  if (photoRequired(result.data.reason) && result.data.photos.length === 0) {
+    res.status(400).json({
+      error: "Please add at least one photo of the damage so we can see what happened.",
+    });
+    return;
+  }
+
   // Collapsed first, for the reason the bag is: the same line sent twice would
   // pass the check on each half and together claim more than was bought.
   const asked = new Map<string, number>();
@@ -510,6 +532,7 @@ router.post("/:id/returns", authenticate, async (req, res) => {
         reason: result.data.reason,
         outcome: result.data.outcome,
         customerNote: result.data.note,
+        photos: result.data.photos,
         items: {
           create: [...asked].map(([orderItemId, quantity]) => ({ orderItemId, quantity })),
         },

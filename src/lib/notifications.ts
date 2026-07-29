@@ -151,6 +151,30 @@ function returnRows(items: { quantity: number; orderItem: { product: { name: str
     .join("");
 }
 
+/**
+ * The photos, small, as links.
+ *
+ * Plenty of mail clients refuse remote images until you ask them to, so each one
+ * is wrapped in a link to itself: the thumbnail when images load, a clickable
+ * line when they do not.
+ */
+function photoBlock(photos: string[]): string {
+  if (photos.length === 0) return "";
+
+  const thumbs = photos
+    .map(
+      (url, index) =>
+        `<a href="${escapeHtml(url)}" style="text-decoration:none;margin:0 8px 8px 0;display:inline-block">
+           <img src="${escapeHtml(url)}" alt="Photo ${index + 1}" width="96" height="96"
+                style="width:96px;height:96px;object-fit:cover;border-radius:10px;border:1px solid #e8e4f2;display:block">
+         </a>`
+    )
+    .join("");
+
+  return `<p style="margin:20px 0 8px;font-size:13px;color:#6b6480"><strong style="color:#2c2440">What they sent</strong></p>
+    <div>${thumbs}</div>`;
+}
+
 function noteBlock(label: string, note: string): string {
   return `<p style="margin:20px 0 0;font-size:13px;line-height:1.6;color:#6b6480">
     <strong style="color:#2c2440">${label}</strong><br>${escapeHtml(note)}</p>`;
@@ -193,6 +217,7 @@ export async function sendReturnRequested(returnId: string): Promise<void> {
           `Order <strong>${ref}</strong>: the customer wants ${asked} because it ${because}.`,
           `<table style="width:100%;border-collapse:collapse">${items}</table>
            ${noteBlock("Their words", request.customerNote)}
+           ${photoBlock(request.photos ?? [])}
            <p style="margin:24px 0 0"><a href="${storeUrl()}/admin/returns"
               style="display:inline-block;padding:12px 24px;border-radius:999px;background:#8b6bff;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Open the returns queue</a></p>`
         ),

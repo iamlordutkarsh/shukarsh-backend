@@ -8,6 +8,20 @@ const LIVE_STATUSES = ["REQUESTED", "APPROVED", "RECEIVED", "COMPLETED"] as cons
 /** Requests waiting on us to do something. */
 const OPEN_STATUSES = ["REQUESTED", "APPROVED", "RECEIVED"] as const;
 
+/** Photos one request may carry. Enough to show a crack from two angles. */
+export const RETURN_PHOTO_LIMIT = 4;
+
+/**
+ * Whether this reason has to come with a picture.
+ *
+ * Damage is a claim about the state of the goods and a photo is the only thing
+ * that settles it without a letter each way. A wrong item is self-evident from
+ * whatever comes back, so a picture is welcome there but not demanded.
+ */
+export function photoRequired(reason: string): boolean {
+  return reason === "DAMAGED";
+}
+
 export type ReturnBlock =
   | "NOT_PAID"
   | "NOT_DELIVERED"
@@ -222,6 +236,7 @@ export function serializeReturn(request: any) {
     outcome: request.outcome,
     status: request.status,
     customerNote: request.customerNote,
+    photos: request.photos ?? [],
     adminNote: request.adminNote ?? null,
     refundAmount: request.refundAmount != null ? Number(request.refundAmount) : null,
     items: (request.items ?? []).map((item: any) => ({

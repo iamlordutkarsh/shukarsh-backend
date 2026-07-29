@@ -228,6 +228,10 @@ model ReturnRequest {
   status     ReturnStatus  @default(REQUESTED)
   /// The customer's own words. Required: "damaged" alone cannot be judged.
   customerNote String
+  /// What the damage looks like. Public URLs in our own storage bucket, checked
+  /// against it on the way in: what a browser sends is not evidence until we
+  /// know we are the ones hosting it.
+  photos     String[]      @default([])
   /// Why we approved or refused, shown to the customer.
   adminNote  String?
   /// What this request was worth when it was decided, apportioned from what was

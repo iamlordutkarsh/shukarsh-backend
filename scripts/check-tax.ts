@@ -12,7 +12,7 @@ import { computeTax, round2 } from "../src/lib/tax";
 import { allocateDiscount } from "../src/lib/coupon";
 import { collapseLines } from "../src/lib/shipping";
 import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
-import { refundBreakdown, returnEligibility } from "../src/lib/returns";
+import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/returns";
 
 let failures = 0;
 
@@ -349,6 +349,9 @@ check(
   ).available,
   { l1: 2 }
 );
+
+check("a damage claim has to come with a photo", photoRequired("DAMAGED"), true);
+check("a wrong item does not need one", photoRequired("WRONG_ITEM"), false);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
