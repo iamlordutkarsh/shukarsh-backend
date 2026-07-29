@@ -273,9 +273,22 @@ nothing is being kept. `npm run check:tax` asserts all of it.
 
 Marking the parcel received asks per item whether it can be sold again, and only
 those units go back into stock. A return covering every unit of the order also
-moves the order itself to Returned. Refunds are not automated yet: the queue
-shows the Razorpay payment id to refund against, and closing a return emails the
-customer.
+moves the order itself to Returned.
+
+Once the parcel is back, one button in the queue sends the money: `POST
+/api/returns/:id/refund` refunds the frozen `refundAmount` against the order's
+Razorpay payment at normal speed, which is free and takes five to seven working
+days. It is a separate action rather than part of closing the return, so nothing
+leaves the account by accident.
+
+Pressing it twice cannot pay twice. The return's id is sent as
+`X-Refund-Idempotency`, so Razorpay recognises a repeat of a request that timed
+out and hands back the original refund; `ReturnRequest.refundId` is unique, so
+the database refuses a second one regardless. A failure is recorded in
+`refundError` and shown in the queue, and the button stays. Refunds for orders
+with no Razorpay payment id have to be made by hand.
+
+Reverse pickup is still manual: book it in the Shiprocket dashboard.
 
 ### What delivery costs the customer
 
