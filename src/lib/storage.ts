@@ -25,7 +25,17 @@ function getClient(): SupabaseClient {
   return client;
 }
 
-function buildObjectPath(originalName: string): string {
+/**
+ * Anything a customer uploaded lives under here.
+ *
+ * Kept apart from the catalogue on purpose: these arrive from the public side of
+ * the site, so being able to list, audit or prune them in one place matters, and
+ * a URL claiming to be evidence on a return can be checked against this prefix
+ * rather than trusted.
+ */
+export const CUSTOMER_PREFIX = "returns";
+
+function buildObjectPath(originalName: string, prefix?: string): string {
   const extension = (path.extname(originalName) || ".jpg").toLowerCase();
   const base = path
     .basename(originalName, path.extname(originalName))
@@ -35,16 +45,20 @@ function buildObjectPath(originalName: string): string {
     .slice(0, 40);
 
   const folder = new Date().toISOString().slice(0, 7);
-  return `${folder}/${base || "image"}-${crypto.randomUUID().slice(0, 8)}${extension}`;
+  const name = `${base || "image"}-${crypto.randomUUID().slice(0, 8)}${extension}`;
+  return prefix ? `${prefix}/${folder}/${name}` : `${folder}/${name}`;
 }
 
-export async function uploadImage(file: {
-  buffer: Buffer;
-  originalname: string;
-  mimetype: string;
-}): Promise<string> {
+export async function uploadImage(
+  file: {
+    buffer: Buffer;
+    originalname: string;
+    mimetype: string;
+  },
+  prefix?: string
+): Promise<string> {
   const supabase = getClient();
-  const objectPath = buildObjectPath(file.originalname);
+  const objectPath = buildObjectPath(file.originalname, prefix);
 
   const { error } = await supabase.storage.from(BUCKET).upload(objectPath, file.buffer, {
     contentType: file.mimetype,
@@ -67,6 +81,17 @@ export function objectPathFromUrl(url: string): string | null {
   if (index === -1) return null;
   const objectPath = url.slice(index + marker.length);
   return objectPath ? decodeURIComponent(objectPath) : null;
+}
+
+/**
+ * Whether this URL is a customer upload of ours.
+ *
+ * What a return request stores is decided by the browser, so without this an
+ * admin opening the queue would render whatever URL someone chose to send.
+ */
+export function isCustomerUpload(url: string): boolean {
+  const objectPath = objectPathFromUrl(url);
+  return objectPath !== null && objectPath.startsWith(`${CUSTOMER_PREFIX}/`);
 }
 
 export async function deleteImage(url: string): Promise<boolean> {

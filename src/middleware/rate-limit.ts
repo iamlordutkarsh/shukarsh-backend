@@ -39,6 +39,19 @@ export const couponLimiter = rateLimit({
 });
 
 /**
+ * Caps what a signed-in customer can push into our storage bucket. Return
+ * photos are the one upload the public side of the site can reach, and an
+ * uncapped one is a free image host on somebody else's bill.
+ */
+export const customerUploadLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_UPLOAD_MAX) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many uploads. Please wait a few minutes and try again." },
+});
+
+/**
  * The same guard for pricing a bag, which also takes a code. Set far higher
  * because the checkout page calls it legitimately on every keystroke of an
  * address: too tight here and checkout stops showing a total.
