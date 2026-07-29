@@ -120,8 +120,12 @@ export interface AnalyticsSummary {
     /** Share of units sold whose cost we actually know, 0 to 1. */
     coverage: number;
   };
+  /**
+   * Only from checkout onwards. The bag lives in the customer's own browser and
+   * is never sent to us until they check out, so anything earlier than this is
+   * not ours to count.
+   */
   funnel: {
-    bagsStarted: number;
     checkoutsStarted: number;
     paid: number;
     abandonRate: number;
@@ -144,7 +148,7 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
   // the whole shop only gets fifteen. A page nobody but the owner looks at must not
   // be able to take the checkout down with it. Running them as one batch also means
   // every figure describes the same instant rather than a smear across the read.
-  const [paidOrders, items, costRows, cartRows, checkouts, top, returned, stockRows, dead, refunds] =
+  const [paidOrders, items, costRows, checkouts, top, returned, stockRows, dead, refunds] =
     await prisma.$transaction([
       // The money columns and the dates come back together so the headline figure
       // and the chart are added up from the same rows. Two queries would be two
@@ -172,14 +176,6 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       prisma.orderItem.findMany({
         where: { order: paidWhere },
         select: { quantity: true, costPrice: true },
-      }),
-
-      // A bag counts as started when something was put in it, not when the cart row
-      // was made: a returning customer reuses one cart forever.
-      prisma.cartItem.findMany({
-        where: { createdAt: { gte: from } },
-        distinct: ["cartId"],
-        select: { cartId: true },
       }),
 
       prisma.order.count({ where: { createdAt: { gte: from } } }),
@@ -226,8 +222,6 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
         _sum: { refundAmount: true },
       }),
     ]);
-
-  const bags = cartRows.length;
 
   let revenue = 0;
   let gst = 0;
@@ -300,7 +294,6 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       coverage: unitsSold > 0 ? round2(costedUnits / unitsSold) : 0,
     },
     funnel: {
-      bagsStarted: bags,
       checkoutsStarted: checkouts,
       paid: orders,
       abandonRate: checkouts > 0 ? round2(1 - orders / checkouts) : 0,
