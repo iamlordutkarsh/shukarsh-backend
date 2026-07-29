@@ -3,6 +3,12 @@ import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { handleWriteError } from "../lib/write-errors";
 import { serializeProduct, serializeProducts } from "../lib/product";
+import {
+  LOW_STOCK_DEFAULT,
+  NotEnoughStockError,
+  moveStock,
+  serializeStockMove,
+} from "../lib/inventory";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
 
@@ -15,6 +21,7 @@ const productSchema = z.object({
   price: z.number().positive(),
   comparePrice: z.number().positive().optional(),
   stock: z.number().int().min(0).default(0),
+  lowStockThreshold: z.number().int().min(0).max(1000).default(LOW_STOCK_DEFAULT),
   images: z.array(z.string()).default([]),
   isActive: z.boolean().default(true),
   weightKg: z.number().positive().max(50).default(0.5),
@@ -39,6 +46,15 @@ const productSchema = z.object({
   // Net of GST: input tax credit means the tax paid to a supplier is not a cost.
   costPrice: z.number().min(0).nullable().optional(),
   categoryId: z.string().min(1),
+});
+
+const stockAdjustSchema = z.object({
+  /** Signed and never zero: this endpoint states a movement, not a total. */
+  delta: z.number().int().min(-10000).max(10000).refine((value) => value !== 0, {
+    message: "Say how many units to add or take away",
+  }),
+  reason: z.enum(["RECEIVED", "CORRECTION", "DAMAGE"]),
+  note: z.string().trim().max(200).optional(),
 });
 
 const sortOptions = {
@@ -121,9 +137,28 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
   }
 
   try {
-    const product = await prisma.product.create({
-      data: { ...result.data, gstRate: result.data.gstRate ?? defaultGstRate() },
+    const opening = result.data.stock;
+
+    const product = await prisma.$transaction(async (tx) => {
+      // Created empty and then filled through the ledger, so the number on the
+      // shelf is the sum of its movements from the very first one. A product that
+      // starts at 12 with nothing to say why is exactly the gap this closes.
+      const created = await tx.product.create({
+        data: { ...result.data, stock: 0, gstRate: result.data.gstRate ?? defaultGstRate() },
+      });
+
+      if (opening > 0) {
+        await moveStock(tx, {
+          productId: created.id,
+          delta: opening,
+          reason: "INITIAL",
+          userId: req.user!.id,
+        });
+      }
+
+      return { ...created, stock: opening };
     });
+
     res.status(201).json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
     handleWriteError(res, error, {
@@ -142,12 +177,30 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   }
 
   const id = req.params.id as string;
+  // Handled separately below: writing it straight would move the shelf with no
+  // record of why, which is the one thing the ledger exists to prevent.
+  const { stock: wantedStock, ...fields } = result.data;
 
   try {
-    const product = await prisma.product.update({
-      where: { id },
-      data: result.data,
+    const product = await prisma.$transaction(async (tx) => {
+      const updated = await tx.product.update({ where: { id }, data: fields });
+
+      if (wantedStock === undefined || wantedStock === updated.stock) return updated;
+
+      // A form posts where the count should end up, not by how much it moved, so
+      // the difference is worked out here and recorded as a correction.
+      const balance = await moveStock(tx, {
+        productId: id,
+        delta: wantedStock - updated.stock,
+        reason: "CORRECTION",
+        note: "Set from the product form",
+        userId: req.user!.id,
+        allowNegative: true,
+      });
+
+      return { ...updated, stock: balance };
     });
+
     res.json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
     handleWriteError(res, error, {
@@ -157,6 +210,75 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       fallback: "Could not save this product",
     });
   }
+});
+
+/**
+ * Moves stock by a difference rather than to a total.
+ *
+ * Two people receiving stock at once both add what they added. A form that posts
+ * the total silently discards whichever save lands second, along with the sale
+ * that happened in between.
+ */
+router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
+  const result = stockAdjustSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: result.error.issues[0]?.message ?? "Invalid input" });
+    return;
+  }
+
+  const id = req.params.id as string;
+
+  try {
+    const product = await prisma.$transaction(async (tx) => {
+      const balance = await moveStock(tx, {
+        productId: id,
+        delta: result.data.delta,
+        reason: result.data.reason,
+        note: result.data.note,
+        userId: req.user!.id,
+        // A recount says what is really there, so it is allowed to contradict us.
+        allowNegative: result.data.reason === "CORRECTION",
+      });
+
+      const updated = await tx.product.findUnique({
+        where: { id },
+        include: { category: { select: { id: true, name: true, slug: true } } },
+      });
+
+      return { updated, balance };
+    });
+
+    if (!product.updated) {
+      res.status(404).json({ error: "Product not found" });
+      return;
+    }
+
+    res.json({ product: serializeProduct(product.updated, { includeCost: true }) });
+  } catch (error) {
+    if (error instanceof NotEnoughStockError) {
+      res.status(409).json({ error: "There are not that many on the shelf to take away." });
+      return;
+    }
+
+    handleWriteError(res, error, {
+      missing: "Product not found",
+      fallback: "Could not adjust the stock",
+    });
+  }
+});
+
+/** Where the stock went, newest first. */
+router.get("/:id/stock-moves", authenticate, requireAdmin, async (req, res) => {
+  const limit = Math.max(1, Math.min(100, Number(req.query.limit) || 30));
+
+  const moves = await prisma.stockMove.findMany({
+    where: { productId: req.params.id as string },
+    orderBy: { createdAt: "desc" },
+    take: limit,
+    include: { user: { select: { firstName: true, lastName: true } } },
+  });
+
+  res.json({ moves: moves.map(serializeStockMove) });
 });
 
 router.delete("/:id", authenticate, requireAdmin, async (req, res) => {

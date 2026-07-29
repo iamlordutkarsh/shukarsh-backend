@@ -4,6 +4,7 @@ import { ReturnStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { applyOrderStatus } from "../lib/order-status";
+import { moveStock } from "../lib/inventory";
 import { sendReturnCompleted, sendReturnDecision } from "../lib/notifications";
 import {
   canTransition,
@@ -116,9 +117,12 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
           const line = request.order.items.find((orderItem) => orderItem.id === item.orderItemId);
           if (!line) continue;
 
-          await tx.product.update({
-            where: { id: line.productId },
-            data: { stock: { increment: item.quantity } },
+          await moveStock(tx, {
+            productId: line.productId,
+            delta: item.quantity,
+            reason: "RETURN_RESTOCK",
+            orderId: request.orderId,
+            userId: req.user!.id,
           });
         }
 

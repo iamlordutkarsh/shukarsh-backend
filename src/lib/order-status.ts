@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { NotEnoughStockError, moveStock } from "./inventory";
 
 /** How far along the fulfilment path each status sits. */
 const RANK: Record<string, number> = {
@@ -79,23 +80,33 @@ export async function applyOrderStatus(
     const closing = nextStatus === "CANCELLED" || nextStatus === "RETURNED";
     const released = paid && closing && !current.stockReleased;
     const reserved = paid && !closing && current.stockReleased;
-    const moveStock = !options?.stockHandledElsewhere;
+    const shelfMoves = !options?.stockHandledElsewhere;
 
-    for (const item of moveStock ? current.items : []) {
+    for (const item of shelfMoves ? current.items : []) {
       if (released) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { increment: item.quantity } },
+        await moveStock(tx, {
+          productId: item.productId,
+          delta: item.quantity,
+          reason: nextStatus === "RETURNED" ? "RETURN_RESTOCK" : "CANCELLATION",
+          orderId: current.id,
         });
       } else if (reserved) {
-        // Conditional so a reopen can never drive the catalogue negative and
-        // promise units to both this customer and whoever bought them since.
-        const taken = await tx.product.updateMany({
-          where: { id: item.productId, stock: { gte: item.quantity } },
-          data: { stock: { decrement: item.quantity } },
-        });
-
-        if (taken.count === 0) throw new InsufficientStockError(item.productId);
+        try {
+          // Conditional, which moveStock is by default, so a reopen can never
+          // drive the catalogue negative and promise units to both this customer
+          // and whoever bought them since.
+          await moveStock(tx, {
+            productId: item.productId,
+            delta: -item.quantity,
+            reason: "REOPEN",
+            orderId: current.id,
+          });
+        } catch (error) {
+          if (error instanceof NotEnoughStockError) {
+            throw new InsufficientStockError(item.productId);
+          }
+          throw error;
+        }
       }
     }
 

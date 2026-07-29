@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { prisma } from "./prisma";
 import { recordRedemption } from "./coupon";
+import { moveStock } from "./inventory";
 
 export interface PaidResult {
   orderId: string;
@@ -60,9 +61,17 @@ export async function markOrderPaid(params: {
       );
     } else {
       for (const item of order.items) {
-        await tx.product.update({
-          where: { id: item.productId },
-          data: { stock: { decrement: item.quantity } },
+        // Unconditional on purpose. The bag was checked against the shelf when it
+        // was priced, and money has now changed hands: refusing to record the sale
+        // because the count has since slipped would lose the sale, not fix it. A
+        // negative balance on the ledger is a visible problem, which is what we
+        // want here.
+        await moveStock(tx, {
+          productId: item.productId,
+          delta: -item.quantity,
+          reason: "SALE",
+          orderId: order.id,
+          allowNegative: true,
         });
       }
     }

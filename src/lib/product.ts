@@ -1,3 +1,5 @@
+import { LOW_STOCK_DEFAULT } from "./inventory";
+
 export interface SerializedProduct {
   id: string;
   name: string;
@@ -6,6 +8,7 @@ export interface SerializedProduct {
   price: number;
   comparePrice: number | null;
   stock: number;
+  lowStockThreshold: number;
   images: string[];
   isActive: boolean;
   weightKg: number;
@@ -40,6 +43,7 @@ export function serializeProduct(product: any, options?: { includeCost?: boolean
     price: Number(product.price),
     comparePrice: product.comparePrice != null ? Number(product.comparePrice) : null,
     stock: product.stock,
+    lowStockThreshold: product.lowStockThreshold ?? LOW_STOCK_DEFAULT,
     images: product.images,
     isActive: product.isActive,
     weightKg: Number(product.weightKg),
