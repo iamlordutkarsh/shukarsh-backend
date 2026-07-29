@@ -381,3 +381,54 @@ export async function sendDispatchNotice(orderId: string): Promise<void> {
     console.error("Dispatch email failed:", error);
   }
 }
+
+export interface LowStockLine {
+  name: string;
+  stock: number;
+  lowStockThreshold: number;
+}
+
+/**
+ * The morning restocking list.
+ *
+ * Goes to the shop, never to a customer. Sorted by the caller with the emptiest
+ * shelf first, so the top of the email is what to deal with today.
+ */
+export async function sendLowStockDigest(products: LowStockLine[]): Promise<void> {
+  if (!isEmailConfigured() || products.length === 0) return;
+
+  const to = shopInbox();
+  if (!to) return;
+
+  const soldOut = products.filter((product) => product.stock <= 0).length;
+
+  try {
+    const rows = products
+      .map(
+        (product) => `<tr>
+          <td style="padding:8px 0;font-size:14px">${escapeHtml(product.name)}</td>
+          <td style="padding:8px 0;font-size:14px;text-align:right;font-weight:600;color:${
+            product.stock <= 0 ? "#e05c7e" : "#d98634"
+          }">${product.stock === 0 ? "Sold out" : `${product.stock} left`}</td>
+        </tr>`
+      )
+      .join("");
+
+    await sendEmail({
+      to,
+      subject:
+        soldOut > 0
+          ? `${soldOut} sold out, ${products.length} need restocking`
+          : `${products.length} product(s) need restocking`,
+      html: layout(
+        "Time to reorder",
+        `These are at or below the level you set for them.`,
+        `<table style="width:100%;border-collapse:collapse">${rows}</table>
+         <p style="margin:24px 0 0"><a href="${storeUrl()}/admin/products"
+            style="display:inline-block;padding:12px 24px;border-radius:999px;background:#8b6bff;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Open the catalogue</a></p>`
+      ),
+    });
+  } catch (error) {
+    console.error("Low stock digest email failed:", error);
+  }
+}

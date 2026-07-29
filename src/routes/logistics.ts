@@ -7,6 +7,7 @@ import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
 import { expireAbandonedOrders } from "../lib/abandoned-orders";
+import { runLowStockDigest } from "../lib/low-stock";
 import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
@@ -223,7 +224,11 @@ router.post("/sync", adminOrCron, async (_req, res) => {
     // cancelling orders is not what Refresh tracking says it does.
     const expiredOrders = byCron ? await expireAbandonedOrders() : 0;
 
-    res.json({ ...tracking, expiredOrders });
+    // Same reasoning: the scheduler is the only reliable clock on a host that
+    // sleeps. Its own once-a-day guard decides whether this actually sends.
+    const lowStock = byCron ? await runLowStockDigest() : "skipped";
+
+    res.json({ ...tracking, expiredOrders, lowStock });
   } catch (error) {
     handleProviderError(res, error, "Could not refresh tracking");
   }
