@@ -18,6 +18,7 @@ import { balanceFrom, isLowStock } from "../src/lib/inventory";
 import { dailySeries, marginOf, shopDayOf, shopDayStart, windowDays } from "../src/lib/analytics";
 import { recoveryPath, recoveryTokenMatches } from "../src/lib/cart-recovery";
 import { toPaise } from "../src/lib/refunds";
+import { emailField, normalizeEmail } from "../src/lib/account";
 
 let failures = 0;
 
@@ -389,6 +390,15 @@ const quiet = dailySeries(
 check("a quiet day is a zero, not a missing bar", quiet.length, 3);
 check("and the day with a sale carries it", quiet[2]?.revenue, 500);
 check("while the others sit at nothing", quiet[0]?.revenue, 0);
+
+// A phone keyboard capitalising the first letter must not create a second
+// account, and neither must a stray space pasted in from an email client.
+check("an address is lowercased", normalizeEmail("Priya@Gmail.COM"), "priya@gmail.com");
+check("and trimmed", normalizeEmail("  priya@gmail.com  "), "priya@gmail.com");
+// The schema has to normalise before it validates, or what gets stored is not
+// what the next sign-in will search for.
+check("the field normalises as it parses", emailField.parse(" Priya@Gmail.com "), "priya@gmail.com");
+check("and still refuses rubbish", emailField.safeParse("priya@").success, false);
 
 // Razorpay counts in paise and rejects fractions, and 452.38 * 100 comes to
 // 45237.999999999996 in binary floating point. Truncating that short-pays the

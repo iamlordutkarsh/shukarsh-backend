@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
+import { adoptLowercaseEmail, emailField, findUserByEmail } from "../lib/account";
 import { hashPassword, verifyPassword, generateToken } from "../lib/auth";
 import { authenticate } from "../middleware/auth";
 import { loginLimiter, registerLimiter } from "../middleware/rate-limit";
@@ -8,14 +9,14 @@ import { loginLimiter, registerLimiter } from "../middleware/rate-limit";
 const router = Router();
 
 const registerSchema = z.object({
-  email: z.string().email(),
+  email: emailField,
   password: z.string().min(6),
   firstName: z.string().optional(),
   lastName: z.string().optional(),
 });
 
 const loginSchema = z.object({
-  email: z.string().email(),
+  email: emailField,
   password: z.string().min(1),
 });
 
@@ -28,7 +29,9 @@ router.post("/register", registerLimiter, async (req, res) => {
 
   const { email, password, firstName, lastName } = result.data;
 
-  const existing = await prisma.user.findUnique({ where: { email } });
+  // Insensitive, so a legacy Priya@gmail.com blocks a second priya@gmail.com
+  // rather than being quietly joined by it.
+  const existing = await findUserByEmail(email);
   if (existing) {
     res.status(409).json({ error: "Email already registered" });
     return;
@@ -58,18 +61,22 @@ router.post("/login", loginLimiter, async (req, res) => {
 
   const { email, password } = result.data;
 
-  const user = await prisma.user.findUnique({ where: { email } });
+  const user = await findUserByEmail(email);
   if (!user || !verifyPassword(password, user.password)) {
     res.status(401).json({ error: "Invalid email or password" });
     return;
   }
 
-  const token = generateToken({ id: user.id, email: user.email, role: user.role });
+  // They have just proved the address is theirs, so this is the safe moment to
+  // tidy a legacy capitalisation. Not awaited: it must never delay a login.
+  void adoptLowercaseEmail(user.id, user.email);
+
+  const token = generateToken({ id: user.id, email, role: user.role });
 
   res.json({
     user: {
       id: user.id,
-      email: user.email,
+      email,
       firstName: user.firstName,
       lastName: user.lastName,
       role: user.role,

@@ -1,11 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
+import { emailField } from "../lib/account";
 import { prisma } from "../lib/prisma";
 
 const router = Router();
 
 const subscribeSchema = z.object({
-  email: z.string().email(),
+  email: emailField,
 });
 
 router.post("/", async (req, res) => {
@@ -15,7 +16,7 @@ router.post("/", async (req, res) => {
     return;
   }
 
-  const email = result.data.email.trim().toLowerCase();
+  const { email } = result.data;
 
   try {
     await prisma.newsletterSubscriber.upsert({
