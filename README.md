@@ -217,6 +217,14 @@ and kitchen pieces cannot be resold once opened, so change of mind is not
 offered. Orders delivered before that column existed have no date to count from
 and are handed to a human rather than refused.
 
+A damage claim has to come with a photo, since it cannot be judged without one.
+Customers upload through `POST /api/uploads/returns`, which needs a signed-in
+account rather than an admin, is rate limited by `RATE_LIMIT_UPLOAD_MAX`, and
+stores under a `returns/` prefix in the same Supabase bucket. What comes back on
+the request is checked against that prefix on the way in: the browser decides
+what to send, so a URL is not evidence until we know we are hosting it. There is
+no customer-facing delete, so nothing can vanish mid-decision.
+
 The request lands in `/admin/returns`, where it is approved or refused with a
 note the customer is emailed word for word. What it is worth is apportioned from
 what was actually paid, not from the sticker price: `OrderItem.taxableAmount +
