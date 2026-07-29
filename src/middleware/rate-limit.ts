@@ -52,6 +52,21 @@ export const customerUploadLimiter = rateLimit({
 });
 
 /**
+ * Guards the one public endpoint that reads an order.
+ *
+ * A recovery link is signed, so guessing the token is the only way in, and a cap
+ * turns that from slow into pointless. Nobody legitimately follows the link in
+ * their email more than a handful of times.
+ */
+export const recoveryLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_RECOVERY_MAX) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many attempts. Please wait a few minutes and try again." },
+});
+
+/**
  * The same guard for pricing a bag, which also takes a code. Set far higher
  * because the checkout page calls it legitimately on every keystroke of an
  * address: too tight here and checkout stops showing a total.

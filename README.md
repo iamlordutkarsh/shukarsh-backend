@@ -187,6 +187,18 @@ cancelled order lets go of its code. That sweep runs hourly in process and again
 on `POST /api/logistics/sync`, which is the clock a host that sleeps actually
 has. Only orders Razorpay never named a payment against are touched.
 
+Halfway through that window, the same sweep sends one recovery email per order
+and never a second, recorded on `Order.recoveryEmailAt`. It is skipped for a
+customer who has paid for anything since, because a card that fails once often
+succeeds on the retry and that customer has not forgotten anything.
+
+The link in it carries an HMAC of the order id, so it works without signing in
+and cannot be made up from an order id alone. `GET /api/orders/:id/recover`
+returns nothing but the products and quantities, and only those still on sale.
+The bag lives in the customer's browser, so the link rebuilds it rather than
+reviving the old checkout: prices, stock, delivery and coupons are all worked out
+again at the till.
+
 `usageLimit` is enforced where it can still be honoured, when the code is applied
 and again before payment starts, so a busy limited code can overshoot its cap by
 a use or two under concurrent checkouts.

@@ -6,7 +6,7 @@ import { prisma } from "../lib/prisma";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { pincodeSchema, splitName } from "../lib/address";
 import { serializeOrder } from "../lib/order";
-import { expireAbandonedOrders } from "../lib/abandoned-orders";
+import { expireAbandonedOrders, remindAbandonedOrders } from "../lib/abandoned-orders";
 import { runLowStockDigest } from "../lib/low-stock";
 import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
@@ -222,13 +222,17 @@ router.post("/sync", adminOrCron, async (_req, res) => {
     // Abandoned checkouts are swept on the same tick, because a scheduler is the
     // only clock a host that sleeps actually has. Not on the admin's button:
     // cancelling orders is not what Refresh tracking says it does.
+    //
+    // Reminders before cancellations, so a checkout is never called off in the
+    // same pass that invited its customer back to it.
+    const recoveryEmails = byCron ? await remindAbandonedOrders() : 0;
     const expiredOrders = byCron ? await expireAbandonedOrders() : 0;
 
     // Same reasoning: the scheduler is the only reliable clock on a host that
     // sleeps. Its own once-a-day guard decides whether this actually sends.
     const lowStock = byCron ? await runLowStockDigest() : "skipped";
 
-    res.json({ ...tracking, expiredOrders, lowStock });
+    res.json({ ...tracking, recoveryEmails, expiredOrders, lowStock });
   } catch (error) {
     handleProviderError(res, error, "Could not refresh tracking");
   }

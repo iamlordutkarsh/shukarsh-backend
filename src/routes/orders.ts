@@ -6,7 +6,9 @@ import { OrderStatus, ReturnOutcome, ReturnReason } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
-import { quoteLimiter } from "../middleware/rate-limit";
+import { quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
+import { recoverLines } from "../lib/cart-recovery";
+import { serializeProduct } from "../lib/product";
 import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
 import { buildQuote, serializeQuote } from "../lib/quote";
 import { serializeOrder } from "../lib/order";
@@ -395,6 +397,36 @@ router.post("/webhook", async (req, res) => {
   } catch (error) {
     console.error("Razorpay webhook processing failed:", error);
   }
+});
+
+/**
+ * Rebuilds a bag from a checkout that was never paid for.
+ *
+ * Public, because the link arrives by email and the customer may well not have an
+ * account. The signature is what stands in for a login, and it grants exactly one
+ * thing: the products and quantities that were picked out. No address, no totals,
+ * nothing about the person.
+ *
+ * Only products still on sale come back, so a link followed weeks later quietly
+ * drops what has since been withdrawn rather than offering it.
+ */
+router.get("/:id/recover", recoveryLimiter, async (req, res) => {
+  const lines = await recoverLines(req.params.id as string, String(req.query.token ?? ""));
+  if (!lines) return res.status(404).json({ error: "This link is no longer valid" });
+
+  const products = await prisma.product.findMany({
+    where: { id: { in: lines.map((line) => line.productId) }, isActive: true },
+    include: { category: { select: { id: true, name: true, slug: true } } },
+  });
+
+  const quantityOf = new Map(lines.map((line) => [line.productId, line.quantity]));
+
+  res.json({
+    items: products.map((product) => ({
+      product: serializeProduct(product),
+      quantity: quantityOf.get(product.id) ?? 1,
+    })),
+  });
 });
 
 router.get("/", authenticate, async (req, res) => {

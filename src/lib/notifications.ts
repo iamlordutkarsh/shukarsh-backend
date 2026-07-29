@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { isEmailConfigured, sendEmail } from "./mailer";
+import { recoveryPath } from "./cart-recovery";
 
 const STORE = "Shukarsh";
 
@@ -339,6 +340,54 @@ export async function sendOrderConfirmation(orderId: string): Promise<void> {
     });
   } catch (error) {
     console.error("Order confirmation email failed:", error);
+  }
+}
+
+/**
+ * One nudge for a checkout that was never paid for.
+ *
+ * Returns whether anything was sent, because the caller records the attempt and
+ * must not mark an order as reminded when no reminder went anywhere. Deliberately
+ * plain: no discount, no countdown, no second try. The commonest reason a checkout
+ * is abandoned is a card that would not go through, and the fix for that is a
+ * working link back, not pressure.
+ */
+export async function sendCartRecovery(orderId: string): Promise<boolean> {
+  if (!isEmailConfigured()) return false;
+
+  const path = recoveryPath(orderId);
+  if (!path) return false;
+
+  try {
+    const order = await loadOrder(orderId);
+    if (!order || order.items.length === 0) return false;
+
+    const to = recipientOf(order);
+    if (!to) return false;
+
+    const firstName = (order.customerName ?? "").trim().split(/\s+/)[0];
+
+    await sendEmail({
+      to,
+      subject: "You left something behind",
+      html: layout(
+        firstName ? `${escapeHtml(firstName)}, your bag is still here` : "Your bag is still here",
+        "We kept hold of what you picked out. One tap puts it back in your bag, and nothing is charged until you check out.",
+        `<table style="width:100%;border-collapse:collapse">
+           ${itemRows(order.items)}
+         </table>
+         <p style="margin:24px 0 0"><a href="${storeUrl()}${path}"
+            style="display:inline-block;padding:12px 24px;border-radius:999px;background:#8b6bff;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Put it back in my bag</a></p>
+         <p style="margin:16px 0 0;font-size:12px;line-height:1.6;color:#9a94ad">
+           Prices and delivery are worked out fresh when you check out, so nothing here is held at yesterday's rate.
+         </p>`
+      ),
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Cart recovery email failed:", error);
+    return false;
   }
 }
 

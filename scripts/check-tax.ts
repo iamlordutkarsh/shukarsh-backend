@@ -7,6 +7,7 @@
  */
 process.env.SELLER_STATE = "Delhi";
 process.env.GST_ENABLED = "true";
+process.env.JWT_SECRET = process.env.JWT_SECRET || "check-tax-only";
 
 import { computeTax, round2 } from "../src/lib/tax";
 import { allocateDiscount } from "../src/lib/coupon";
@@ -15,6 +16,7 @@ import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
 import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/returns";
 import { balanceFrom, isLowStock } from "../src/lib/inventory";
 import { dailySeries, marginOf, shopDayOf, shopDayStart, windowDays } from "../src/lib/analytics";
+import { recoveryPath, recoveryTokenMatches } from "../src/lib/cart-recovery";
 
 let failures = 0;
 
@@ -386,6 +388,24 @@ const quiet = dailySeries(
 check("a quiet day is a zero, not a missing bar", quiet.length, 3);
 check("and the day with a sale carries it", quiet[2]?.revenue, 500);
 check("while the others sit at nothing", quiet[0]?.revenue, 0);
+
+// A recovery link is the only way into an order without signing in, so the
+// signature on it has to be the thing that decides, not the order id.
+const someOrder = "11111111-2222-3333-4444-555555555555";
+const signed = recoveryPath(someOrder) ?? "";
+check("a recovery link carries the order and a signature", /order=.+&token=[0-9a-f]{32}$/.test(signed), true);
+check(
+  "the signature it carries is accepted",
+  recoveryTokenMatches(someOrder, signed.split("token=")[1] ?? ""),
+  true
+);
+check("one letter out and it is refused", recoveryTokenMatches(someOrder, "0".repeat(32)), false);
+check("an empty token is refused", recoveryTokenMatches(someOrder, ""), false);
+check(
+  "and a signature for one order does not open another",
+  recoveryTokenMatches("66666666-7777-8888-9999-000000000000", signed.split("token=")[1] ?? ""),
+  false
+);
 
 check("stock at the reorder level counts as low", isLowStock({ stock: 5, lowStockThreshold: 5 }), true);
 check("one above it does not", isLowStock({ stock: 6, lowStockThreshold: 5 }), false);

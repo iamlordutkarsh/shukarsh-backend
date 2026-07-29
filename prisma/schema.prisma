@@ -268,6 +268,10 @@ model Order {
   /// when the order was created. Written once, by whichever of the browser
   /// callback and the webhook wins the race.
   paidAt            DateTime?
+  /// When we asked the customer to come back and finish. Recorded so we ask once
+  /// and only once: a checkout nobody paid for is worth one reminder, and a
+  /// second one is a shop that nags.
+  recoveryEmailAt   DateTime?
   stockReleased     Boolean       @default(false)
   shippingAddress   Json?
   razorpayOrderId   String?       @unique

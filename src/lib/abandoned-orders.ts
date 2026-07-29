@@ -1,5 +1,6 @@
 import { prisma } from "./prisma";
 import { applyOrderStatus } from "./order-status";
+import { sendCartRecovery } from "./notifications";
 
 const DEFAULT_HOURS = 24;
 
@@ -7,6 +8,83 @@ const DEFAULT_HOURS = 24;
 function graceHours(): number {
   const raw = Number(process.env.ABANDONED_ORDER_HOURS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_HOURS;
+}
+
+/**
+ * Halfway through the grace period.
+ *
+ * Late enough that the customer has plainly stopped rather than gone to find
+ * their card, and early enough that the reminder still points at a checkout that
+ * is alive. Tied to the grace period rather than set on its own, so shortening one
+ * cannot leave the shop emailing about orders it already cancelled.
+ */
+function reminderAfterMs(): number {
+  return (graceHours() / 2) * 60 * 60 * 1000;
+}
+
+/**
+ * Asks people to come back to a checkout they never paid for.
+ *
+ * One email per order and never a second, which is why the attempt is recorded
+ * before anything else can go wrong with the batch. An order with nowhere to send
+ * to is left alone rather than marked, since there is no reminder to regret.
+ *
+ * Someone who abandoned a checkout and then bought the same thing on a second
+ * attempt is skipped: a card that fails once often succeeds on the retry, and
+ * telling that customer they forgot something reads as a shop that is not paying
+ * attention.
+ */
+export async function remindAbandonedOrders(limit = 50): Promise<number> {
+  const now = Date.now();
+  const cutoff = new Date(now - reminderAfterMs());
+  const expiresAt = new Date(now - graceHours() * 60 * 60 * 1000);
+
+  const waiting = await prisma.order.findMany({
+    where: {
+      paymentStatus: "PENDING",
+      status: "PENDING",
+      razorpayPaymentId: null,
+      recoveryEmailAt: null,
+      createdAt: { lt: cutoff, gt: expiresAt },
+      items: { some: {} },
+    },
+    select: { id: true, email: true, userId: true, createdAt: true },
+    orderBy: { createdAt: "asc" },
+    take: limit,
+  });
+
+  let sent = 0;
+
+  for (const order of waiting) {
+    try {
+      const boughtSince = await prisma.order.count({
+        where: {
+          paymentStatus: "PAID",
+          createdAt: { gte: order.createdAt },
+          ...(order.userId
+            ? { userId: order.userId }
+            : order.email
+              ? { email: order.email }
+              : { id: "none" }),
+        },
+      });
+      if (boughtSince > 0) continue;
+
+      if (!(await sendCartRecovery(order.id))) continue;
+
+      await prisma.order.update({
+        where: { id: order.id },
+        data: { recoveryEmailAt: new Date() },
+      });
+      sent += 1;
+    } catch (error) {
+      // One stuck order must not stop the rest of the batch.
+      console.error(`Could not remind about abandoned order ${order.id}:`, error);
+    }
+  }
+
+  if (sent > 0) console.log(`Sent ${sent} cart recovery email(s)`);
+  return sent;
 }
 
 /**
@@ -70,7 +148,12 @@ const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
  */
 export function startAbandonedOrderSweep(): void {
   const run = () => {
-    expireAbandonedOrders().catch((error) => console.error("Abandoned order sweep failed:", error));
+    // Remind first, then cancel. The other order would call a checkout off in the
+    // same pass that asked its customer to come back to it.
+    remindAbandonedOrders()
+      .catch((error) => console.error("Cart recovery sweep failed:", error))
+      .then(() => expireAbandonedOrders())
+      .catch((error) => console.error("Abandoned order sweep failed:", error));
   };
 
   run();
