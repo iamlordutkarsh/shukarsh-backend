@@ -41,6 +41,7 @@ export async function markOrderPaid(params: {
       where: { razorpayOrderId: params.razorpayOrderId, paymentStatus: { not: "PAID" } },
       data: {
         paymentStatus: "PAID",
+        paidAt: new Date(),
         ...(cancelled ? { stockReleased: true } : {}),
         // Payment does not advance the status. A paid order waits on Pending
         // until the shop approves it, which is what the To approve queue in the

@@ -263,6 +263,11 @@ model Order {
   /// here, so it is written once and never moved: couriers replay scans, and a
   /// second Delivered event must not hand out a fresh week to return in.
   deliveredAt       DateTime?
+  /// When the money actually arrived. paymentStatus alone cannot say when, so
+  /// without this any report of what the shop took last month has to guess from
+  /// when the order was created. Written once, by whichever of the browser
+  /// callback and the webhook wins the race.
+  paidAt            DateTime?
   stockReleased     Boolean       @default(false)
   shippingAddress   Json?
   razorpayOrderId   String?       @unique
