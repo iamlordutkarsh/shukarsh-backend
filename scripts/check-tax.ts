@@ -14,7 +14,7 @@ import { collapseLines } from "../src/lib/shipping";
 import { freeDeliveryShortfall, shippingFee } from "../src/lib/shipping-policy";
 import { photoRequired, refundBreakdown, returnEligibility } from "../src/lib/returns";
 import { balanceFrom, isLowStock } from "../src/lib/inventory";
-import { marginOf, shopDayStart, windowDays } from "../src/lib/analytics";
+import { dailySeries, marginOf, shopDayOf, shopDayStart, windowDays } from "../src/lib/analytics";
 
 let failures = 0;
 
@@ -364,6 +364,28 @@ check(
 );
 check("an unknown window falls back to a month", windowDays("999"), 30);
 check("a known one is kept", windowDays("7"), 7);
+
+// Half past midnight in Delhi is still the evening before in London. An order
+// taken then belongs to the day the shop was open, not to yesterday's takings.
+check(
+  "a late order counts on the day it was placed in Delhi",
+  shopDayOf(new Date("2026-07-28T19:00:00Z")),
+  "2026-07-29"
+);
+check(
+  "and an order just before midnight IST is still today",
+  shopDayOf(new Date("2026-07-28T18:29:00Z")),
+  "2026-07-28"
+);
+
+const quiet = dailySeries(
+  [{ at: new Date("2026-07-29T06:00:00Z"), amount: 500 }],
+  3,
+  new Date("2026-07-29T12:00:00Z")
+);
+check("a quiet day is a zero, not a missing bar", quiet.length, 3);
+check("and the day with a sale carries it", quiet[2]?.revenue, 500);
+check("while the others sit at nothing", quiet[0]?.revenue, 0);
 
 check("stock at the reorder level counts as low", isLowStock({ stock: 5, lowStockThreshold: 5 }), true);
 check("one above it does not", isLowStock({ stock: 6, lowStockThreshold: 5 }), false);

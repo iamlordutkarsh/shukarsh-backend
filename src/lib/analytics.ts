@@ -16,6 +16,40 @@ export function shopDayStart(daysAgo: number, now = new Date()): Date {
   return new Date(ist.getTime() - IST_OFFSET_MS);
 }
 
+/** Which shop day an instant belongs to, as YYYY-MM-DD. */
+export function shopDayOf(at: Date): string {
+  return new Date(at.getTime() + IST_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+/**
+ * Takings per day, including the days nothing sold on.
+ *
+ * A day with no orders has to appear as a zero rather than go missing, or the
+ * chart closes the gap and a quiet week reads as a steady one. Bucketed here in
+ * plain TypeScript rather than by the database so the boundary between one shop
+ * day and the next is something that can be tested.
+ */
+export function dailySeries(
+  orders: { at: Date; amount: number }[],
+  days: number,
+  now = new Date()
+): { day: string; revenue: number; orders: number }[] {
+  const buckets = new Map<string, { day: string; revenue: number; orders: number }>();
+  for (let back = days - 1; back >= 0; back -= 1) {
+    const day = shopDayOf(shopDayStart(back, now));
+    buckets.set(day, { day, revenue: 0, orders: 0 });
+  }
+
+  for (const order of orders) {
+    const bucket = buckets.get(shopDayOf(order.at));
+    if (!bucket) continue;
+    bucket.revenue += order.amount;
+    bucket.orders += 1;
+  }
+
+  return [...buckets.values()].map((bucket) => ({ ...bucket, revenue: round2(bucket.revenue) }));
+}
+
 export const WINDOWS = [7, 30, 90] as const;
 
 export function windowDays(raw: unknown): number {
@@ -99,28 +133,26 @@ export interface AnalyticsSummary {
   stock: { onShelf: number; valueAtCost: number; lowCount: number };
 }
 
-/**
- * Every number the dashboard shows, in one pass.
- *
- * Aggregated in the database rather than by pulling orders into memory: this runs
- * on every visit to the page, and a shop that does well is exactly the one where
- * loading every order to add it up stops working.
- */
+/** Every number the dashboard shows, in one pass. */
 export async function analyticsSummary(days: number): Promise<AnalyticsSummary> {
   const from = shopDayStart(days - 1);
   const paidWhere = paidIn(from);
 
-  const [totals, items, costRows, bags, checkouts, daily, top, returned, stockRows] =
+  const [paidOrders, items, costRows, bags, checkouts, top, returned, stockRows] =
     await Promise.all([
-      prisma.order.aggregate({
+      // The money columns and the dates come back together so the headline figure
+      // and the chart are added up from the same rows. Two queries would be two
+      // chances for the total on the card to disagree with the bars under it.
+      prisma.order.findMany({
         where: paidWhere,
-        _sum: {
+        select: {
+          paidAt: true,
+          createdAt: true,
           totalAmount: true,
           taxTotal: true,
           discountTotal: true,
           shippingAmount: true,
         },
-        _count: { _all: true },
       }),
 
       prisma.orderItem.aggregate({
@@ -148,18 +180,6 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
 
       prisma.order.count({ where: { createdAt: { gte: from } } }),
 
-      prisma.$queryRaw<{ day: Date; revenue: Prisma.Decimal; orders: bigint }[]>`
-        SELECT date_trunc('day', COALESCE("paidAt", "createdAt") AT TIME ZONE 'Asia/Kolkata') AS day,
-               SUM("totalAmount") AS revenue,
-               COUNT(*) AS orders
-        FROM "Order"
-        WHERE "paymentStatus" = 'PAID'
-          AND "status" NOT IN ('CANCELLED', 'RETURNED')
-          AND COALESCE("paidAt", "createdAt") >= ${from}
-        GROUP BY 1
-        ORDER BY 1
-      `,
-
       prisma.orderItem.groupBy({
         by: ["productId"],
         where: { order: paidWhere },
@@ -184,8 +204,25 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       }),
     ]);
 
-  const revenue = num(totals._sum.totalAmount);
-  const orders = totals._count._all;
+  let revenue = 0;
+  let gst = 0;
+  let discount = 0;
+  let delivery = 0;
+  for (const order of paidOrders) {
+    revenue += num(order.totalAmount);
+    gst += num(order.taxTotal);
+    discount += num(order.discountTotal);
+    delivery += num(order.shippingAmount);
+  }
+  const orders = paidOrders.length;
+
+  const daily = dailySeries(
+    paidOrders.map((order) => ({
+      at: order.paidAt ?? order.createdAt,
+      amount: num(order.totalAmount),
+    })),
+    days
+  );
 
   const netSales = num(items._sum.taxableAmount);
   let cost = 0;
@@ -243,9 +280,9 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       revenue: round2(revenue),
       orders,
       averageOrder: orders > 0 ? round2(revenue / orders) : 0,
-      gstCollected: round2(num(totals._sum.taxTotal)),
-      discountGiven: round2(num(totals._sum.discountTotal)),
-      deliveryCharged: round2(num(totals._sum.shippingAmount)),
+      gstCollected: round2(gst),
+      discountGiven: round2(discount),
+      deliveryCharged: round2(delivery),
       refunded: round2(num(refunds._sum.refundAmount)),
     },
     margin: {
@@ -261,11 +298,7 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       paid: orders,
       abandonRate: checkouts > 0 ? round2(1 - orders / checkouts) : 0,
     },
-    daily: daily.map((row) => ({
-      day: new Date(row.day).toISOString().slice(0, 10),
-      revenue: round2(num(row.revenue)),
-      orders: Number(row.orders),
-    })),
+    daily,
     topProducts: top.map((row) => ({
       id: row.productId,
       name: nameOf.get(row.productId)?.name ?? "Removed product",

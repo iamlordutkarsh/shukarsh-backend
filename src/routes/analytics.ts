@@ -18,7 +18,11 @@ router.get("/summary", authenticate, requireAdmin, async (req, res) => {
     res.json({ summary: await analyticsSummary(windowDays(req.query.days)) });
   } catch (error) {
     console.error("Analytics summary failed:", error);
-    res.status(500).json({ error: "Could not work out the numbers" });
+    // Only an admin ever sees this, and they are the one person who can act on it.
+    // A page that fails with nothing but "something went wrong" costs a round trip
+    // through the server logs to learn anything at all.
+    const reason = error instanceof Error ? error.message.split("\n").filter(Boolean).pop() : null;
+    res.status(500).json({ error: reason ?? "Could not work out the numbers" });
   }
 });
 
