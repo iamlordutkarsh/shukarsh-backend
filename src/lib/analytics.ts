@@ -138,8 +138,14 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
   const from = shopDayStart(days - 1);
   const paidWhere = paidIn(from);
 
-  const [paidOrders, items, costRows, bags, checkouts, top, returned, stockRows] =
-    await Promise.all([
+  // One connection, not ten.
+  //
+  // Fanning these out with Promise.all asks the pooler for a client per query, and
+  // the whole shop only gets fifteen. A page nobody but the owner looks at must not
+  // be able to take the checkout down with it. Running them as one batch also means
+  // every figure describes the same instant rather than a smear across the read.
+  const [paidOrders, items, costRows, cartRows, checkouts, top, returned, stockRows, dead, refunds] =
+    await prisma.$transaction([
       // The money columns and the dates come back together so the headline figure
       // and the chart are added up from the same rows. Two queries would be two
       // chances for the total on the card to disagree with the bars under it.
@@ -170,13 +176,11 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
 
       // A bag counts as started when something was put in it, not when the cart row
       // was made: a returning customer reuses one cart forever.
-      prisma.cartItem
-        .findMany({
-          where: { createdAt: { gte: from } },
-          distinct: ["cartId"],
-          select: { cartId: true },
-        })
-        .then((rows) => rows.length),
+      prisma.cartItem.findMany({
+        where: { createdAt: { gte: from } },
+        distinct: ["cartId"],
+        select: { cartId: true },
+      }),
 
       prisma.order.count({ where: { createdAt: { gte: from } } }),
 
@@ -202,7 +206,28 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
         where: { isActive: true },
         select: { id: true, stock: true, costPrice: true, lowStockThreshold: true },
       }),
+
+      // Anything on the shelf that has not sold once in the window. The point is
+      // what to stop reordering, so switched-off products and empty shelves are
+      // not it.
+      prisma.product.findMany({
+        where: {
+          isActive: true,
+          stock: { gt: 0 },
+          orderItems: { none: { order: paidWhere } },
+        },
+        orderBy: { stock: "desc" },
+        take: 8,
+        select: { id: true, name: true, slug: true, stock: true },
+      }),
+
+      prisma.returnRequest.aggregate({
+        where: { status: "COMPLETED", completedAt: { gte: from } },
+        _sum: { refundAmount: true },
+      }),
     ]);
+
+  const bags = cartRows.length;
 
   let revenue = 0;
   let gst = 0;
@@ -244,28 +269,10 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
     : [];
   const nameOf = new Map(named.map((product) => [product.id, product]));
 
-  // Anything on the shelf that has not sold once in the window. The point is what
-  // to stop reordering, so switched-off products and empty shelves are not it.
-  const dead = await prisma.product.findMany({
-    where: {
-      isActive: true,
-      stock: { gt: 0 },
-      orderItems: { none: { order: paidWhere } },
-    },
-    orderBy: { stock: "desc" },
-    take: 8,
-    select: { id: true, name: true, slug: true, stock: true },
-  });
-
   const returnedUnits = returned.reduce((total, item) => total + item.quantity, 0);
   const damaged = returned
     .filter((item) => item.returnRequest.reason === "DAMAGED")
     .reduce((total, item) => total + item.quantity, 0);
-
-  const refunds = await prisma.returnRequest.aggregate({
-    where: { status: "COMPLETED", completedAt: { gte: from } },
-    _sum: { refundAmount: true },
-  });
 
   const onShelf = stockRows.reduce((total, product) => total + product.stock, 0);
   const valueAtCost = stockRows.reduce(
@@ -303,8 +310,8 @@ export async function analyticsSummary(days: number): Promise<AnalyticsSummary> 
       id: row.productId,
       name: nameOf.get(row.productId)?.name ?? "Removed product",
       slug: nameOf.get(row.productId)?.slug ?? "",
-      units: row._sum.quantity ?? 0,
-      revenue: round2(num(row._sum.taxableAmount)),
+      units: row._sum?.quantity ?? 0,
+      revenue: round2(num(row._sum?.taxableAmount)),
     })),
     deadStock: dead,
     returns: {
