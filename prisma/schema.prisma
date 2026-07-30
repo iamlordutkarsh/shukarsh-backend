@@ -282,6 +282,7 @@ model Order {
   redemption        CouponRedemption?
   returns           ReturnRequest[]
   stockMoves        StockMove[]
+  reviews           Review[]
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @updatedAt
 }
@@ -485,15 +486,27 @@ model WishlistItem {
 }
 
 model Review {
-  id        String   @id @default(uuid())
-  userId    String
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  rating    Int
-  comment   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String    @id @default(uuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  rating       Int
+  comment      String?
+  /// The delivered order that earned the right to write this. Every review has
+  /// one, because nobody can review something they were not sent. Kept so the
+  /// claim can be checked later, and set to null rather than deleting the review
+  /// if that order is ever removed.
+  orderId      String?
+  order        Order?    @relation(fields: [orderId], references: [id], onDelete: SetNull)
+  /// Set when the shop takes a review down. Abuse only: a shop that hides
+  /// unflattering reviews is publishing an average it has rigged, which is both
+  /// dishonest and against Google's rules for showing stars in search results.
+  hiddenAt     DateTime?
+  hiddenReason String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
   @@unique([userId, productId])
+  @@index([productId, hiddenAt])
 }
