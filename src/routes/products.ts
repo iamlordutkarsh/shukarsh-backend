@@ -9,6 +9,7 @@ import {
   moveStock,
   serializeStockMove,
 } from "../lib/inventory";
+import { ratingSummaries, ratingSummary } from "../lib/reviews";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
 
@@ -107,10 +108,15 @@ router.get("/", perCaller, async (req, res) => {
     prisma.product.count({ where }),
   ]);
 
+  // One grouped query for the whole page, after the page is known. Asking per
+  // card would be twelve round trips, and this database is behind a pooler that
+  // has already been exhausted once by a fan of concurrent reads.
+  const ratings = await ratingSummaries(products.map((product) => product.id));
+
   res.json({
     // The admin catalogue reads this same endpoint, so cost comes back for an
     // admin and is dropped for everyone else.
-    products: serializeProducts(products, { includeCost: isAdminRequest(req) }),
+    products: serializeProducts(products, { includeCost: isAdminRequest(req), ratings }),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
@@ -126,7 +132,9 @@ router.get("/:slug", perCaller, async (req, res) => {
     return;
   }
 
-  res.json({ product: serializeProduct(product, { includeCost: isAdminRequest(req) }) });
+  const rating = await ratingSummary(product.id);
+
+  res.json({ product: serializeProduct(product, { includeCost: isAdminRequest(req), rating }) });
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {
