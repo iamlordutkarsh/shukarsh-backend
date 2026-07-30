@@ -15,6 +15,21 @@ export const loginLimiter = rateLimit({
   message: { error: "Too many sign in attempts. Please wait a few minutes and try again." },
 });
 
+/**
+ * Review writing cap.
+ *
+ * Only delivered customers can post at all, so this is not the spam defence; it
+ * is there because one row per person per product means a stuck client can spend
+ * the afternoon rewriting the same review, and each attempt is a write.
+ */
+export const reviewLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_REVIEW_MAX) || 30,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many review updates. Please wait a few minutes and try again." },
+});
+
 /** Every attempt counts here, since the point is to cap account creation. */
 export const registerLimiter = rateLimit({
   windowMs: WINDOW_MS,

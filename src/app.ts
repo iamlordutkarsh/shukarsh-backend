@@ -11,6 +11,7 @@ import wishlistRoutes from "./routes/wishlist";
 import logisticsRoutes from "./routes/logistics";
 import couponRoutes from "./routes/coupons";
 import returnRoutes from "./routes/returns";
+import reviewRoutes from "./routes/reviews";
 import analyticsRoutes from "./routes/analytics";
 
 dotenv.config();
@@ -54,6 +55,7 @@ app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/logistics", logisticsRoutes);
 app.use("/api/coupons", couponRoutes);
 app.use("/api/returns", returnRoutes);
+app.use("/api/reviews", reviewRoutes);
 app.use("/api/analytics", analyticsRoutes);
 
 app.use((_req, res) => {
