@@ -19,6 +19,7 @@ import { dailySeries, marginOf, shopDayOf, shopDayStart, windowDays } from "../s
 import { recoveryPath, recoveryTokenMatches } from "../src/lib/cart-recovery";
 import { toPaise } from "../src/lib/refunds";
 import { emailField, normalizeEmail } from "../src/lib/account";
+import { displayName, roundRating } from "../src/lib/reviews";
 
 let failures = 0;
 
@@ -437,6 +438,21 @@ check(
 
 check("a damage claim has to come with a photo", photoRequired("DAMAGED"), true);
 check("a wrong item does not need one", photoRequired("WRONG_ITEM"), false);
+
+// A review is published next to a person's name, so the name has to be the
+// smallest thing that still reads as a person.
+check("a reviewer is shown by first name and an initial", displayName({ firstName: "Priya", lastName: "Sharma" }), "Priya S.");
+check("a first name alone is enough", displayName({ firstName: "Priya", lastName: null }), "Priya");
+check("nobody is named as nobody", displayName({ firstName: null, lastName: null }), "Shukarsh customer");
+check("whitespace is not a name", displayName({ firstName: "   ", lastName: "Sharma" }), "Shukarsh customer");
+
+// Five ratings of 4 and one of 5 average 4.1666...; printing that raw next to a
+// row of stars is noise, and rounding to a whole number would show four stars
+// for a shop rated four and a half.
+check("a rating is rounded to one decimal", roundRating(4.16666), 4.2);
+check("an exact average keeps its shape", roundRating(4), 4);
+check("a half star survives", roundRating(4.5), 4.5);
+check("no reviews means no average", roundRating(null), null);
 
 console.log(failures === 0 ? "\nAll checks passed." : `\n${failures} check(s) failed.`);
 process.exit(failures === 0 ? 0 : 1);
