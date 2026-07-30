@@ -96,48 +96,48 @@ model Address {
 }
 
 model Category {
-  id          String     @id @default(uuid())
+  id          String           @id @default(uuid())
   name        String
-  slug        String     @unique
+  slug        String           @unique
   description String?
   image       String?
   parentId    String?
-  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children    Category[] @relation("CategoryHierarchy")
+  parent      Category?        @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[]       @relation("CategoryHierarchy")
   products    Product[]
   coupons     CouponCategory[]
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 }
 
 model Product {
-  id           String   @id @default(uuid())
-  name         String
-  slug         String   @unique
-  description  String?
-  price        Decimal  @db.Decimal(10, 2)
-  comparePrice Decimal? @db.Decimal(10, 2)
-  stock        Int      @default(0)
+  id                String   @id @default(uuid())
+  name              String
+  slug              String   @unique
+  description       String?
+  price             Decimal  @db.Decimal(10, 2)
+  comparePrice      Decimal? @db.Decimal(10, 2)
+  stock             Int      @default(0)
   /// Stock at or below this counts as needing a reorder. Per product because a
   /// set of plates and a packet of nails do not sell at the same rate.
-  lowStockThreshold Int @default(5)
-  images       String[]
-  isActive     Boolean  @default(true)
-  weightKg     Decimal  @default(0.5) @db.Decimal(6, 3)
-  lengthCm     Int      @default(15)
-  breadthCm    Int      @default(12)
-  heightCm     Int      @default(6)
-  hsn          String?
+  lowStockThreshold Int      @default(5)
+  images            String[]
+  isActive          Boolean  @default(true)
+  weightKg          Decimal  @default(0.5) @db.Decimal(6, 3)
+  lengthCm          Int      @default(15)
+  breadthCm         Int      @default(12)
+  heightCm          Int      @default(6)
+  hsn               String?
   /// GST percent. Price is the MRP, so this says how much tax is already inside it.
-  gstRate      Decimal  @default(5) @db.Decimal(5, 2)
+  gstRate           Decimal  @default(5) @db.Decimal(5, 2)
   /// What this costs to buy in, net of GST, since input tax credit means the
   /// tax paid to a supplier is not really a cost. Never leaves the API to
   /// anyone but an admin: see serializeProduct.
-  costPrice    Decimal? @db.Decimal(10, 2)
-  categoryId   String
-  category     Category @relation(fields: [categoryId], references: [id])
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  costPrice         Decimal? @db.Decimal(10, 2)
+  categoryId        String
+  category          Category @relation(fields: [categoryId], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   cartItems  CartItem[]
   orderItems OrderItem[]
@@ -218,11 +218,11 @@ model Cart {
 }
 
 model CartItem {
-  id        String  @id @default(uuid())
+  id        String   @id @default(uuid())
   cartId    String
-  cart      Cart    @relation(fields: [cartId], references: [id], onDelete: Cascade)
+  cart      Cart     @relation(fields: [cartId], references: [id], onDelete: Cascade)
   productId String
-  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
   quantity  Int
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -231,29 +231,29 @@ model CartItem {
 }
 
 model Order {
-  id                String        @id @default(uuid())
+  id                String            @id @default(uuid())
   userId            String?
-  user              User?         @relation(fields: [userId], references: [id])
+  user              User?             @relation(fields: [userId], references: [id])
   email             String?
   customerName      String?
   customerPhone     String?
-  status            OrderStatus   @default(PENDING)
-  paymentStatus     PaymentStatus @default(PENDING)
-  itemsTotal        Decimal       @default(0) @db.Decimal(10, 2)
-  shippingAmount    Decimal       @default(0) @db.Decimal(10, 2)
+  status            OrderStatus       @default(PENDING)
+  paymentStatus     PaymentStatus     @default(PENDING)
+  itemsTotal        Decimal           @default(0) @db.Decimal(10, 2)
+  shippingAmount    Decimal           @default(0) @db.Decimal(10, 2)
   /// totalAmount is itemsTotal - discountTotal + shippingAmount.
-  discountTotal     Decimal       @default(0) @db.Decimal(10, 2)
+  discountTotal     Decimal           @default(0) @db.Decimal(10, 2)
   couponId          String?
-  coupon            Coupon?       @relation(fields: [couponId], references: [id])
+  coupon            Coupon?           @relation(fields: [couponId], references: [id])
   /// Snapshot, so a renamed or deleted code still reads correctly on the order.
   couponCode        String?
-  totalAmount       Decimal       @db.Decimal(10, 2)
+  totalAmount       Decimal           @db.Decimal(10, 2)
   /// GST already inside totalAmount, broken out for the invoice. Prices are
   /// tax-inclusive, so these never add to what the customer was charged.
-  taxTotal          Decimal       @default(0) @db.Decimal(10, 2)
-  cgstTotal         Decimal       @default(0) @db.Decimal(10, 2)
-  sgstTotal         Decimal       @default(0) @db.Decimal(10, 2)
-  igstTotal         Decimal       @default(0) @db.Decimal(10, 2)
+  taxTotal          Decimal           @default(0) @db.Decimal(10, 2)
+  cgstTotal         Decimal           @default(0) @db.Decimal(10, 2)
+  sgstTotal         Decimal           @default(0) @db.Decimal(10, 2)
+  igstTotal         Decimal           @default(0) @db.Decimal(10, 2)
   /// Buyer's state at the time of the order. GSTR-1 is filed state-wise, and a
   /// customer editing their address later must not rewrite past returns.
   placeOfSupply     String?
@@ -272,9 +272,9 @@ model Order {
   /// and only once: a checkout nobody paid for is worth one reminder, and a
   /// second one is a shop that nags.
   recoveryEmailAt   DateTime?
-  stockReleased     Boolean       @default(false)
+  stockReleased     Boolean           @default(false)
   shippingAddress   Json?
-  razorpayOrderId   String?       @unique
+  razorpayOrderId   String?           @unique
   razorpayPaymentId String?
   razorpaySignature String?
   items             OrderItem[]
@@ -282,8 +282,8 @@ model Order {
   redemption        CouponRedemption?
   returns           ReturnRequest[]
   stockMoves        StockMove[]
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 }
 
 /// A customer asking to send something back.
@@ -293,43 +293,43 @@ model Order {
 /// being decided. The order only becomes Returned once the goods are actually
 /// back, which is what puts the stock on the shelf.
 model ReturnRequest {
-  id         String        @id @default(uuid())
-  orderId    String
-  order      Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id           String        @id @default(uuid())
+  orderId      String
+  order        Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
   /// Who asked. Null when the shop raised it on a guest's behalf.
-  userId     String?
-  user       User?         @relation(fields: [userId], references: [id])
-  reason     ReturnReason
-  outcome    ReturnOutcome
-  status     ReturnStatus  @default(REQUESTED)
+  userId       String?
+  user         User?         @relation(fields: [userId], references: [id])
+  reason       ReturnReason
+  outcome      ReturnOutcome
+  status       ReturnStatus  @default(REQUESTED)
   /// The customer's own words. Required: "damaged" alone cannot be judged.
   customerNote String
   /// What the damage looks like. Public URLs in our own storage bucket, checked
   /// against it on the way in: what a browser sends is not evidence until we
   /// know we are the ones hosting it.
-  photos     String[]      @default([])
+  photos       String[]      @default([])
   /// Why we approved or refused, shown to the customer.
-  adminNote  String?
+  adminNote    String?
   /// What this request was worth when it was decided, apportioned from what was
   /// actually paid. Frozen at approval so a later price change cannot move it.
-  refundAmount Decimal?    @db.Decimal(10, 2)
+  refundAmount Decimal?      @db.Decimal(10, 2)
   /// Razorpay's id for the money going back, and the proof it went. Unique, so
   /// the database itself refuses to record a second refund against one return
   /// even if every check above it were somehow skipped.
-  refundId   String?       @unique
-  refundedAt DateTime?
+  refundId     String?       @unique
+  refundedAt   DateTime?
   /// What Razorpay last said: pending, processed or failed. A refund is not
   /// finished when the call returns, only accepted.
   refundStatus String?
   /// Why the last attempt did not work, kept so the next person can see what
   /// happened without going through the logs.
-  refundError String?
-  items      ReturnItem[]
-  decidedAt  DateTime?
-  receivedAt DateTime?
-  completedAt DateTime?
-  createdAt  DateTime      @default(now())
-  updatedAt  DateTime      @updatedAt
+  refundError  String?
+  items        ReturnItem[]
+  decidedAt    DateTime?
+  receivedAt   DateTime?
+  completedAt  DateTime?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   @@index([status])
   @@index([orderId])
@@ -378,49 +378,49 @@ model Shipment {
 }
 
 model OrderItem {
-  id        String  @id @default(uuid())
-  orderId   String
-  order     Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  productId String
-  product   Product @relation(fields: [productId], references: [id])
-  quantity  Int
-  price     Decimal @db.Decimal(10, 2)
+  id            String       @id @default(uuid())
+  orderId       String
+  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId     String
+  product       Product      @relation(fields: [productId], references: [id])
+  quantity      Int
+  price         Decimal      @db.Decimal(10, 2)
   /// Snapshot of the rate when the order was placed. Slabs change, and a
   /// reissued invoice has to match the one the customer already has.
-  gstRate       Decimal @default(0) @db.Decimal(5, 2)
-  taxableAmount Decimal @default(0) @db.Decimal(10, 2)
-  taxAmount     Decimal @default(0) @db.Decimal(10, 2)
+  gstRate       Decimal      @default(0) @db.Decimal(5, 2)
+  taxableAmount Decimal      @default(0) @db.Decimal(10, 2)
+  taxAmount     Decimal      @default(0) @db.Decimal(10, 2)
   /// What the goods cost us at the time of sale. Snapshotted for the same
   /// reason as the rate: renegotiating with a supplier must not quietly
   /// rewrite the profit on orders that already shipped.
-  costPrice     Decimal? @db.Decimal(10, 2)
+  costPrice     Decimal?     @db.Decimal(10, 2)
   returnItems   ReturnItem[]
-  createdAt DateTime @default(now())
+  createdAt     DateTime     @default(now())
 }
 
 model Coupon {
-  id          String     @id @default(uuid())
+  id             String     @id @default(uuid())
   /// Always stored upper case; lookups upper-case the input to match.
-  code        String     @unique
-  description String?
-  type        CouponType
+  code           String     @unique
+  description    String?
+  type           CouponType
   /// Percent off for PERCENT, rupees off for FLAT, unused for FREE_SHIPPING.
-  value       Decimal    @default(0) @db.Decimal(10, 2)
+  value          Decimal    @default(0) @db.Decimal(10, 2)
   /// Ceiling on a percent discount, so "25% off up to ₹500" is expressible.
-  maxDiscount Decimal?   @db.Decimal(10, 2)
+  maxDiscount    Decimal?   @db.Decimal(10, 2)
   /// Checked against the eligible lines only, not the whole bag.
-  minOrderValue Decimal  @default(0) @db.Decimal(10, 2)
+  minOrderValue  Decimal    @default(0) @db.Decimal(10, 2)
   /// Redemptions allowed in total, and per customer. Null means no limit.
-  usageLimit   Int?
-  perUserLimit Int?      @default(1)
-  usageCount   Int       @default(0)
+  usageLimit     Int?
+  perUserLimit   Int?       @default(1)
+  usageCount     Int        @default(0)
   /// Only redeemable by someone who has never had an order confirmed.
-  firstOrderOnly Boolean @default(false)
-  startsAt     DateTime?
-  expiresAt    DateTime?
-  isActive     Boolean   @default(true)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  firstOrderOnly Boolean    @default(false)
+  startsAt       DateTime?
+  expiresAt      DateTime?
+  isActive       Boolean    @default(true)
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
 
   /// Leave both empty for a coupon that applies to the whole catalogue. With
   /// either set, only matching lines are discounted.
@@ -451,16 +451,16 @@ model CouponProduct {
 /// Written when an order is confirmed, never when it is merely placed, so an
 /// abandoned checkout does not burn a use of a limited code.
 model CouponRedemption {
-  id       String  @id @default(uuid())
-  couponId String
-  coupon   Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
-  orderId  String  @unique
-  order    Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  userId   String?
-  user     User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  id        String   @id @default(uuid())
+  couponId  String
+  coupon    Coupon   @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  orderId   String   @unique
+  order     Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   /// Kept so a guest checkout still counts against a per-customer limit.
-  email    String?
-  amount   Decimal @db.Decimal(10, 2)
+  email     String?
+  amount    Decimal  @db.Decimal(10, 2)
   createdAt DateTime @default(now())
 
   @@index([couponId, userId])
