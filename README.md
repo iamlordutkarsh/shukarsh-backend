@@ -310,6 +310,38 @@ with no Razorpay payment id have to be made by hand.
 
 Reverse pickup is still manual: book it in the Shiprocket dashboard.
 
+### Reviews
+
+Only customers the shop has delivered to can write one. This is not a badge
+added afterwards: `POST /api/reviews` looks for an order belonging to the caller
+that is `DELIVERED` and contains that product, and refuses without one. So every
+row in the table is a real purchase, and there is no unverified case to display.
+Delivered rather than merely paid, because a review written while the parcel is
+still in a van is about the courier.
+
+One review per person per product (`@@unique([userId, productId])`), so posting
+again edits the existing one. `GET /api/reviews/mine?productId=` tells the form
+whether the shopper is eligible before it renders, and returns their own review
+including its hidden state.
+
+The shop can hide a review, never delete it, and only with a reason:
+`POST /api/reviews/:id/hide` with `{ reason }` stores `hiddenAt` and
+`hiddenReason`, and `unhide` reverses it. Hidden rows are filtered inside the
+query, so they are out of both the public list and the average. Editing a hidden
+review does not put it back up.
+
+The reason is mandatory on purpose. Take down abuse, spam, and anything naming a
+third party; do not take down a fair complaint. Hiding poor ratings leaves an
+average that lies to shoppers, and it is also what disqualifies the shop from
+showing stars in Google results, which is the only reason the aggregate is
+published as structured data at all.
+
+Shopper-facing product reads carry `rating: { count, average }`, averaged by the
+database over all visible reviews and rounded to one decimal. Admin writes
+(saving a product, adjusting stock) leave the field off entirely rather than
+sending a zero, since absent means "not counted here" and zero would read as
+"nobody likes this".
+
 ### What delivery costs the customer
 
 The shop's own policy, not the courier's rate: free at or above
