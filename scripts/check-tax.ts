@@ -208,9 +208,32 @@ check(
     { productId: "a", quantity: 5 },
   ]),
   [
-    { productId: "a", quantity: 10 },
-    { productId: "b", quantity: 1 },
+    { productId: "a", variantId: null, quantity: 10 },
+    { productId: "b", variantId: null, quantity: 1 },
   ]
+);
+
+// Two sizes of one shirt come off two different shelves, so collapsing them
+// together would check ten units against whichever shelf happened to be first.
+check(
+  "two sizes of one product stay apart",
+  collapseLines([
+    { productId: "a", variantId: "m", quantity: 5 },
+    { productId: "a", variantId: "l", quantity: 5 },
+  ]),
+  [
+    { productId: "a", variantId: "m", quantity: 5 },
+    { productId: "a", variantId: "l", quantity: 5 },
+  ]
+);
+
+check(
+  "the same size twice becomes one line",
+  collapseLines([
+    { productId: "a", variantId: "m", quantity: 5 },
+    { productId: "a", variantId: "m", quantity: 5 },
+  ]),
+  [{ productId: "a", variantId: "m", quantity: 10 }]
 );
 check(
   "a bag with nothing repeated is left as it is",
@@ -219,8 +242,8 @@ check(
     { productId: "b", quantity: 3 },
   ]),
   [
-    { productId: "a", quantity: 2 },
-    { productId: "b", quantity: 3 },
+    { productId: "a", variantId: null, quantity: 2 },
+    { productId: "b", variantId: null, quantity: 3 },
   ]
 );
 
