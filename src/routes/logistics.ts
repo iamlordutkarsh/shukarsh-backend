@@ -11,7 +11,7 @@ import { runLowStockDigest } from "../lib/low-stock";
 import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
-import { pickCourier, priceCart, quoteShipping } from "../lib/shipping";
+import { cartItemSchema, pickCourier, priceCart, quoteShipping } from "../lib/shipping";
 import { codPolicy } from "../lib/cod-policy";
 import { freeDeliveryShortfall, shippingFee, shippingPolicy } from "../lib/shipping-policy";
 import { createTtlCache, type Parcel } from "../lib/parcel";
@@ -40,9 +40,7 @@ const pincodeCache = createTtlCache<{ city: string | null; state: string | null 
 
 const ratesSchema = z.object({
   pincode: pincodeSchema,
-  items: z
-    .array(z.object({ productId: z.string().min(1), quantity: z.number().int().positive().max(20) }))
-    .min(1),
+  items: z.array(cartItemSchema).min(1),
 });
 
 /** Prisma's Json input type does not accept a bare array of interfaces. */

@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { z } from "zod";
 import { computeParcel, createTtlCache, weightBucket, type Parcel } from "./parcel";
 import { shippingFee } from "./shipping-policy";
 import { round2 } from "./tax";
@@ -19,6 +20,19 @@ export interface CartLine {
   variantId?: string | null;
   quantity: number;
 }
+
+/**
+ * One line of a bag, as it arrives from a browser.
+ *
+ * Shared rather than written out at each endpoint: four of them take a bag, and
+ * a field missing from one of them is silently stripped by zod, which would send
+ * a customer's chosen size to be priced as no size at all.
+ */
+export const cartItemSchema = z.object({
+  productId: z.string().min(1),
+  variantId: z.string().uuid().optional(),
+  quantity: z.number().int().positive().max(20),
+});
 
 export interface PricedLine {
   productId: string;

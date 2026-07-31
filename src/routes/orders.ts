@@ -13,6 +13,7 @@ import { NotEnoughStockError, moveStock } from "../lib/inventory";
 import { serializeProduct } from "../lib/product";
 import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
 import { buildQuote, serializeQuote } from "../lib/quote";
+import { cartItemSchema } from "../lib/shipping";
 import { serializeOrder } from "../lib/order";
 import { isWebhookConfigured, markOrderPaid, paymentFromWebhook, verifyWebhookSignature } from "../lib/payment";
 import { InsufficientStockError, applyOrderStatus } from "../lib/order-status";
@@ -40,12 +41,7 @@ function getRazorpay(): Razorpay {
 }
 
 const createOrderSchema = z.object({
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      quantity: z.number().int().positive().max(20),
-    })
-  ).min(1),
+  items: z.array(cartItemSchema).min(1),
   shippingAddress: shippingAddressSchema,
   // Lowercased on the way in so an address is one identity however it was
   // capitalised. Coupon eligibility is decided by matching this against past
@@ -57,12 +53,7 @@ const createOrderSchema = z.object({
 });
 
 const quoteSchema = z.object({
-  items: z.array(
-    z.object({
-      productId: z.string().min(1),
-      quantity: z.number().int().positive().max(20),
-    })
-  ).min(1),
+  items: z.array(cartItemSchema).min(1),
   pincode: pincodeSchema.optional(),
   state: z.string().trim().min(2).optional(),
   courierId: z.number().int().positive().optional(),

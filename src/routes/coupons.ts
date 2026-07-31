@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma";
 import { handleWriteError } from "../lib/write-errors";
 import { normalizeCode } from "../lib/coupon";
 import { buildQuote } from "../lib/quote";
+import { cartItemSchema } from "../lib/shipping";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { couponLimiter } from "../middleware/rate-limit";
@@ -102,14 +103,7 @@ function couponAsInput(coupon: {
 
 const applySchema = z.object({
   code: z.string().trim().min(1).max(40),
-  items: z
-    .array(
-      z.object({
-        productId: z.string().min(1),
-        quantity: z.number().int().positive().max(20),
-      })
-    )
-    .min(1),
+  items: z.array(cartItemSchema).min(1),
   email: z.string().email().optional(),
 });
 
