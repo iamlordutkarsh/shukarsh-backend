@@ -176,15 +176,51 @@ export function isLowStock(product: { stock: number; lowStockThreshold?: number 
  * something that is not for sale.
  */
 export async function lowStockProducts(limit = 50) {
-  return prisma.product.findMany({
-    where: {
-      isActive: true,
-      stock: { lte: prisma.product.fields.lowStockThreshold },
-    },
+  const products = await prisma.product.findMany({
+    where: { isActive: true },
     orderBy: [{ stock: "asc" }, { name: "asc" }],
-    take: limit,
-    select: { id: true, name: true, slug: true, stock: true, lowStockThreshold: true },
+    select: {
+      id: true,
+      name: true,
+      slug: true,
+      stock: true,
+      lowStockThreshold: true,
+      variants: {
+        where: { isActive: true },
+        orderBy: [{ position: "asc" }, { label: "asc" }],
+        select: { id: true, label: true, stock: true },
+      },
+    },
   });
+
+  /**
+   * A size is a shelf, so it is the thing that runs out.
+   *
+   * Comparing a product's total against the threshold hides the failure that
+   * matters once there are sizes: 41 jackets in stock and not one of them a
+   * medium reads as healthy, and nobody reorders mediums. So a product with
+   * sizes is reported size by size and never as a total, against the same
+   * threshold, because that number is the shop saying "reorder at this many".
+   */
+  const low = products.flatMap((product) => {
+    if (product.variants.length === 0) {
+      return product.stock <= product.lowStockThreshold
+        ? [{ ...product, name: product.name, stock: product.stock }]
+        : [];
+    }
+
+    return product.variants
+      .filter((variant) => variant.stock <= product.lowStockThreshold)
+      .map((variant) => ({
+        id: product.id,
+        name: `${product.name} · ${variant.label}`,
+        slug: product.slug,
+        stock: variant.stock,
+        lowStockThreshold: product.lowStockThreshold,
+      }));
+  });
+
+  return low.sort((a, b) => a.stock - b.stock || a.name.localeCompare(b.name)).slice(0, limit);
 }
 
 export function serializeStockMove(move: any) {
