@@ -36,43 +36,36 @@ than erroring.
 
 ## Getting Started
 
-1. Install dependencies:
-   ```bash
-   npm install
-   ```
+```bash
+npm install
+cp .env.example .env          # then fill in DATABASE_URL and JWT_SECRET
+npx prisma migrate dev        # create the schema
+npx prisma db seed            # optional sample catalogue
+npm run dev                   # http://localhost:5000
+```
 
-2. Copy the environment file and fill in your values:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Set up the database:
-   ```bash
-   npx prisma migrate dev --name init
-   ```
-
-4. (Optional) Seed sample data:
-   ```bash
-   npx prisma db seed
-   ```
-
-5. Run the development server:
-   ```bash
-   npm run dev
-   ```
-
-The API will be available at `http://localhost:5000`.
+`DATABASE_URL` and `JWT_SECRET` are the only two you need to get a server up.
+Everything else turns a feature on.
 
 ## Scripts
 
-- `npm run dev` — Start development server with hot reload
-- `npm run build` — Compile TypeScript
-- `npm run start` — Start production server
-- `npm run lint` — ESLint over the whole repo
-- `npm run check:tax` — Assert the GST, discount, delivery and refund arithmetic
-- `npm run rates:survey` — Quote real courier rates across India (needs Shiprocket credentials)
-- `npm run db:migrate` — Run Prisma migrations
-- `npm run db:studio` — Open Prisma Studio
+| Command | What it does | Needs a database |
+| --- | --- | --- |
+| `npm run dev` | Dev server, reloads on save | yes |
+| `npm run build` | Compile TypeScript | no |
+| `npm run start` | Migrate, then serve the build | yes |
+| `npm run lint` | ESLint over the repo | no |
+| `npm run check:tax` | Asserts the GST, discount, delivery, COD and refund arithmetic against worked examples | no |
+| `npm run check:stock` | Every product against the sum of its stock ledger | yes |
+| `npm run check:emails` | Addresses that differ only by case | yes |
+| `npm run rates:survey` | Real courier rates across 33 pincodes, with median and p90 | no, but needs Shiprocket credentials |
+| `npm run db:migrate` | Apply migrations | yes |
+| `npm run db:studio` | Browse the data | yes |
+
+> [!TIP]
+> `check:tax` needs nothing but the code, so it belongs in any pre-push habit.
+> The three that need a database are diagnostics you run when something looks
+> wrong, not part of the build.
 
 ## Deployment
 
