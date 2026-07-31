@@ -370,8 +370,14 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
         email: order.email ?? "orders@shukarsh.com",
         phone,
         items: order.items.map((item) => ({
-          name: item.product.name,
-          sku: item.product.slug,
+          // The size goes in the name and the SKU, because this is what the
+          // packer reads off the label and what the courier prints on the
+          // manifest. A picking list that says "Cotton T-Shirt" three times is
+          // how the wrong size goes in the box.
+          name: item.variantLabel ? `${item.product.name} (${item.variantLabel})` : item.product.name,
+          sku: item.variantLabel
+            ? `${item.product.slug}-${item.variantLabel.toLowerCase().replace(/\s+/g, "-")}`
+            : item.product.slug,
           units: item.quantity,
           sellingPrice: Number(item.price),
           hsn: item.product.hsn ?? undefined,

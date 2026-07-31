@@ -39,11 +39,24 @@ function layout(heading: string, intro: string, body: string): string {
 </body></html>`;
 }
 
-function itemRows(items: { quantity: number; price: unknown; product: { name: string } }[]): string {
+/**
+ * What a customer needs to read to know this is the right thing: the size as
+ * well as the name, so an email about a large is not identical to one about a
+ * medium. Reads the snapshot on the line rather than the size itself, which may
+ * have been renamed since.
+ */
+function lineName(line: { variantLabel?: string | null; product: { name: string } }): string {
+  const name = escapeHtml(line.product.name);
+  return line.variantLabel ? `${name} <span style="color:#6f6a80">· ${escapeHtml(line.variantLabel)}</span>` : name;
+}
+
+function itemRows(
+  items: { quantity: number; price: unknown; variantLabel?: string | null; product: { name: string } }[]
+): string {
   return items
     .map(
       (item) => `<tr>
-        <td style="padding:8px 0;font-size:14px">${escapeHtml(item.product.name)}
+        <td style="padding:8px 0;font-size:14px">${lineName(item)}
           <span style="color:#9a94ad"> × ${item.quantity}</span></td>
         <td style="padding:8px 0;font-size:14px;text-align:right;font-weight:600">${money(
           Number(item.price) * item.quantity
@@ -153,11 +166,13 @@ const OUTCOME_LABEL: Record<string, string> = {
   EXCHANGE: "a replacement",
 };
 
-function returnRows(items: { quantity: number; orderItem: { product: { name: string } } }[]): string {
+function returnRows(
+  items: { quantity: number; orderItem: { variantLabel?: string | null; product: { name: string } } }[]
+): string {
   return items
     .map(
-      (item) => `<tr><td style="padding:8px 0;font-size:14px">${escapeHtml(
-        item.orderItem.product.name
+      (item) => `<tr><td style="padding:8px 0;font-size:14px">${lineName(
+        item.orderItem
       )}<span style="color:#9a94ad"> × ${item.quantity}</span></td></tr>`
     )
     .join("");
