@@ -284,6 +284,10 @@ router.post("/create", async (req, res) => {
             // same product twice.
             create: cart.lines.map((line, index) => ({
               productId: line.productId,
+              variantId: line.variantId,
+              // The label as well as the link: a size that is later renamed or
+              // withdrawn must not change what this invoice says was bought.
+              variantLabel: line.variantLabel,
               quantity: line.quantity,
               price: line.price,
               // The rate tax was actually worked out at, not the product's, so a
@@ -310,6 +314,7 @@ router.post("/create", async (req, res) => {
         for (const line of cart.lines) {
           await moveStock(tx, {
             productId: line.productId,
+            variantId: line.variantId,
             delta: -line.quantity,
             reason: "SALE",
             orderId: created.id,

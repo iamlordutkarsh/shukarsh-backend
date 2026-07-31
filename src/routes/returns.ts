@@ -120,6 +120,9 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
 
           await moveStock(tx, {
             productId: line.productId,
+            // Back to the shelf it left, so a returned medium does not quietly
+            // become a large the catalogue thinks it can sell.
+            variantId: line.variantId,
             delta: item.quantity,
             reason: "RETURN_RESTOCK",
             orderId: request.orderId,

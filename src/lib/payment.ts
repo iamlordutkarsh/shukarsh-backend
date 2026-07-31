@@ -69,6 +69,7 @@ export async function markOrderPaid(params: {
         // want here.
         await moveStock(tx, {
           productId: item.productId,
+          variantId: item.variantId,
           delta: -item.quantity,
           reason: "SALE",
           orderId: order.id,

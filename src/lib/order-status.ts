@@ -92,6 +92,7 @@ export async function applyOrderStatus(
       if (released) {
         await moveStock(tx, {
           productId: item.productId,
+          variantId: item.variantId,
           delta: item.quantity,
           reason: nextStatus === "RETURNED" ? "RETURN_RESTOCK" : "CANCELLATION",
           orderId: current.id,
@@ -103,6 +104,7 @@ export async function applyOrderStatus(
           // and whoever bought them since.
           await moveStock(tx, {
             productId: item.productId,
+            variantId: item.variantId,
             delta: -item.quantity,
             reason: "REOPEN",
             orderId: current.id,
