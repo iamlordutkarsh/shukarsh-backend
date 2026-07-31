@@ -446,47 +446,59 @@ same list four times.
 
 ### Returns
 
-A customer can open a return from their own order page for
-`RETURN_WINDOW_DAYS` (7 by default) after delivery, which is counted from
-`Order.deliveredAt`, written the first time an order is seen delivered and never
-moved after that. Only two reasons are accepted, damaged and wrong item: nails
-and kitchen pieces cannot be resold once opened, so change of mind is not
-offered. Orders delivered before that column existed have no date to count from
-and are handed to a human rather than refused.
+```mermaid
+stateDiagram-v2
+    [*] --> REQUESTED: customer, within RETURN_WINDOW_DAYS of delivery
+    REQUESTED --> REJECTED: with a reason they are emailed
+    REQUESTED --> APPROVED: freezes refundAmount
+    APPROVED --> RECEIVED: parcel is back, resellable units chosen
+    RECEIVED --> COMPLETED: refund sent, or replacement posted
+    REJECTED --> [*]
+    COMPLETED --> [*]
+```
 
-A damage claim has to come with a photo, since it cannot be judged without one.
-Customers upload through `POST /api/uploads/returns`, which needs a signed-in
-account rather than an admin, is rate limited by `RATE_LIMIT_UPLOAD_MAX`, and
-stores under a `returns/` prefix in the same Supabase bucket. What comes back on
-the request is checked against that prefix on the way in: the browser decides
-what to send, so a URL is not evidence until we know we are hosting it. There is
-no customer-facing delete, so nothing can vanish mid-decision.
+| Rule | Where it comes from |
+| --- | --- |
+| Window opens at delivery | `Order.deliveredAt`, written the first time an order is seen delivered and never moved |
+| Two reasons only, damaged or wrong item | Nails and kitchen pieces cannot be resold once opened |
+| A damage claim needs a photo | Uploaded to `POST /api/uploads/returns`, signed-in customers, `returns/` prefix |
+| What it is worth is frozen on approval | `refundAmount`, apportioned from what was actually paid |
+| Delivery comes back only if nothing is kept | And the COD fee with it |
+| Only resellable units return to stock | Asked per item when the parcel is marked received |
+| A return covering every unit | Also moves the order itself to `RETURNED` |
 
-The request lands in `/admin/returns`, where it is approved or refused with a
-note the customer is emailed word for word. What it is worth is apportioned from
-what was actually paid, not from the sticker price: `OrderItem.taxableAmount +
-taxAmount` is the line net of its share of any coupon, so a bag with ₹300 off
-does not refund a third of that discount twice. Delivery is only refunded when
-nothing is being kept. `npm run check:tax` asserts all of it.
+Sending the money is its own button, `POST /api/returns/:id/refund`, not part of
+closing the return. Pressing it twice cannot pay twice: the return id goes out as
+`X-Refund-Idempotency` so Razorpay hands back the original refund, and
+`ReturnRequest.refundId` is unique so the database refuses a second one anyway. A
+failure is recorded in `refundError`, shown in the queue, and the button stays.
 
-Marking the parcel received asks per item whether it can be sold again, and only
-those units go back into stock. A return covering every unit of the order also
-moves the order itself to Returned.
+> [!NOTE]
+> Reverse pickup is still manual. Book it in the Shiprocket dashboard.
 
-Once the parcel is back, one button in the queue sends the money: `POST
-/api/returns/:id/refund` refunds the frozen `refundAmount` against the order's
-Razorpay payment at normal speed, which is free and takes five to seven working
-days. It is a separate action rather than part of closing the return, so nothing
-leaves the account by accident.
+<details>
+<summary>Why a photo URL is not evidence until we check it</summary>
 
-Pressing it twice cannot pay twice. The return's id is sent as
-`X-Refund-Idempotency`, so Razorpay recognises a repeat of a request that timed
-out and hands back the original refund; `ReturnRequest.refundId` is unique, so
-the database refuses a second one regardless. A failure is recorded in
-`refundError` and shown in the queue, and the button stays. Refunds for orders
-with no Razorpay payment id have to be made by hand.
+The browser decides what to send, so an arbitrary URL on the request proves
+nothing. What comes back is checked against the `returns/` prefix in our own
+Supabase bucket on the way in, and there is no customer-facing delete, so nothing
+can vanish halfway through a decision. Uploads are rate limited by
+`RATE_LIMIT_UPLOAD_MAX` and need a signed-in account rather than an admin.
 
-Reverse pickup is still manual: book it in the Shiprocket dashboard.
+</details>
+
+<details>
+<summary>Why the refund is apportioned rather than the sticker price</summary>
+
+`OrderItem.taxableAmount + taxAmount` is the line net of its share of any coupon.
+Refunding the sticker price on one dress out of three when the bag had ₹300 off
+would hand back a third of that discount twice. GST is charged per line at that
+line's own rate, so which line the money comes off changes what is owed.
+`npm run check:tax` asserts all of it, and orders delivered before `deliveredAt`
+existed have no date to count from, so they are handed to a human rather than
+refused.
+
+</details>
 
 ### Reviews
 
