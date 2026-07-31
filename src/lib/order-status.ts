@@ -121,6 +121,14 @@ export async function applyOrderStatus(
     // window to ask for a return.
     const delivered = nextStatus === "DELIVERED" && !current.deliveredAt;
 
+    /**
+     * Delivery is when cash changes hands, so it is the only honest moment to
+     * call a COD order paid. Every report of what the shop took reads paidAt,
+     * and dating it from placement would book money that had not arrived and
+     * might never have.
+     */
+    const cashCollected = delivered && current.paymentMethod === "COD" && !current.paidAt;
+
     await tx.order.update({
       where: { id: orderId },
       data: {
@@ -128,6 +136,7 @@ export async function applyOrderStatus(
         ...(released ? { stockReleased: true } : {}),
         ...(reserved ? { stockReleased: false } : {}),
         ...(delivered ? { deliveredAt: new Date() } : {}),
+        ...(cashCollected ? { paymentStatus: "PAID" as const, paidAt: new Date() } : {}),
       },
     });
 
