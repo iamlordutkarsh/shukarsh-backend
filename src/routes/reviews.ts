@@ -86,6 +86,38 @@ router.get("/mine", authenticate, async (req, res) => {
 });
 
 /**
+ * The caller's own reviews across several products at once.
+ *
+ * An order page has to show which of its items have already been reviewed, and
+ * asking product by product would be forty requests for a forty line order
+ * against a database behind a pooler that has been exhausted once already.
+ *
+ * No eligibility here: the caller sends the ids from an order of theirs that has
+ * been delivered, which is the eligibility. Nothing is returned that does not
+ * belong to them.
+ */
+router.get("/mine/list", authenticate, async (req, res) => {
+  const ids = String(req.query.productIds ?? "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .slice(0, 100);
+
+  if (ids.length === 0) {
+    res.status(400).json({ error: "Which products?" });
+    return;
+  }
+
+  const reviews = await prisma.review.findMany({
+    where: { userId: req.user!.id, productId: { in: ids } },
+    include: { user: { select: { firstName: true, lastName: true } } },
+  });
+
+  res.setHeader("Cache-Control", "private, no-store");
+  res.json({ reviews: reviews.map((review) => serializeReview(review, { includeHidden: true })) });
+});
+
+/**
  * Writes the shopper's review of a product they were sent.
  *
  * One row per person per product, so posting again edits rather than stacks. An
