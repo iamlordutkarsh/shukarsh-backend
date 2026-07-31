@@ -234,7 +234,7 @@ sequenceDiagram
     R-->>B: success
     B->>A: POST /orders/verify
     R->>A: payment.captured (independently)
-    Note over A: both hit the same conditional update;<br/>the second sees it already paid and does nothing
+    Note over A: both hit the same conditional update.<br/>Whichever is second sees it already paid and does nothing
 ```
 
 ## How the shop works
