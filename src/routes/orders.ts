@@ -8,6 +8,8 @@ import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
 import { recoverLines } from "../lib/cart-recovery";
+import { recordRedemption } from "../lib/coupon";
+import { NotEnoughStockError, moveStock } from "../lib/inventory";
 import { serializeProduct } from "../lib/product";
 import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
 import { buildQuote, serializeQuote } from "../lib/quote";
@@ -51,6 +53,7 @@ const createOrderSchema = z.object({
   email: z.string().email().transform((value) => value.toLowerCase()),
   courierId: z.number().int().positive().optional(),
   couponCode: z.string().trim().max(40).optional(),
+  paymentMethod: z.enum(["PREPAID", "COD"]).default("PREPAID"),
 });
 
 const quoteSchema = z.object({
@@ -69,6 +72,7 @@ const quoteSchema = z.object({
   // counts against, so an unusable one is dropped rather than failing the quote
   // and blanking the GST and discount the customer is looking at.
   email: z.string().email().optional().catch(undefined),
+  paymentMethod: z.enum(["PREPAID", "COD"]).optional(),
 });
 
 const verifyPaymentSchema = z.object({
@@ -145,7 +149,7 @@ router.post("/quote", quoteLimiter, async (req, res) => {
     return;
   }
 
-  const { items, pincode, state, courierId, couponCode, email } = result.data;
+  const { items, pincode, state, courierId, couponCode, email, paymentMethod } = result.data;
 
   try {
     const quote = await buildQuote({
@@ -157,6 +161,7 @@ router.post("/quote", quoteLimiter, async (req, res) => {
       couponCode,
       userId: optionalUserId(req),
       email,
+      paymentMethod,
     });
 
     res.json(serializeQuote(quote));
@@ -179,7 +184,7 @@ router.post("/create", async (req, res) => {
     return;
   }
 
-  const { items, shippingAddress, email, courierId, couponCode } = result.data;
+  const { items, shippingAddress, email, courierId, couponCode, paymentMethod } = result.data;
   const userId = optionalUserId(req);
 
   try {
@@ -193,9 +198,11 @@ router.post("/create", async (req, res) => {
       couponCode,
       userId,
       email,
+      paymentMethod,
     });
 
     const { cart, shipping, tax, coupon, totalAmount } = quote;
+    const isCod = quote.paymentMethod === "COD";
 
     if (cart.itemsTotal <= 0) {
       res.status(400).json({ error: "Cart total must be greater than zero" });
@@ -224,68 +231,124 @@ router.post("/create", async (req, res) => {
       return;
     }
 
-    const razorpay = getRazorpay();
+    // The quote drops to prepaid quietly so a page can keep pricing, but by here
+    // the customer has pressed a button that says cash on delivery. Charging
+    // their card instead would be the wrong kind of helpful.
+    if (paymentMethod === "COD" && !isCod) {
+      res.status(409).json({ error: quote.codError, codRejected: true });
+      return;
+    }
+
     const amountInPaise = Math.round(totalAmount * 100);
 
-    const razorpayOrder = await razorpay.orders.create({
-      amount: amountInPaise,
-      currency: "INR",
-      receipt: `order_${Date.now()}`,
-      notes: {
-        email,
-        phone: shippingAddress.phone,
-        pincode: shippingAddress.zip,
-      },
+    const razorpayOrder = isCod
+      ? null
+      : await getRazorpay().orders.create({
+          amount: amountInPaise,
+          currency: "INR",
+          receipt: `order_${Date.now()}`,
+          notes: {
+            email,
+            phone: shippingAddress.phone,
+            pincode: shippingAddress.zip,
+          },
+        });
+
+    const order = await prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
+        data: {
+          itemsTotal: cart.itemsTotal,
+          shippingAmount: shipping.amount,
+          paymentMethod: quote.paymentMethod,
+          codFee: quote.codFee,
+          discountTotal: quote.discountTotal,
+          couponId: coupon?.couponId ?? null,
+          couponCode: coupon?.code ?? null,
+          totalAmount,
+          taxTotal: tax.taxTotal,
+          cgstTotal: tax.cgstTotal,
+          sgstTotal: tax.sgstTotal,
+          igstTotal: tax.igstTotal,
+          placeOfSupply: tax.placeOfSupply,
+          courierId: shipping.courierId,
+          courierName: shipping.courierName,
+          shippingAddress,
+          email,
+          customerName: shippingAddress.name,
+          customerPhone: shippingAddress.phone,
+          razorpayOrderId: razorpayOrder?.id ?? null,
+          userId,
+          items: {
+            // Indexed by position, not product id: computeTax maps over the lines
+            // it was given, so index i lines up even if a cart somehow carries the
+            // same product twice.
+            create: cart.lines.map((line, index) => ({
+              productId: line.productId,
+              quantity: line.quantity,
+              price: line.price,
+              // The rate tax was actually worked out at, not the product's, so a
+              // row never claims a rate applied while recording no tax.
+              gstRate: tax.lines[index]?.rate ?? line.gstRate,
+              taxableAmount: tax.lines[index]?.taxable ?? line.gross,
+              taxAmount: tax.lines[index]?.tax ?? 0,
+              // Snapshotted for the same reason as the rate: renegotiating with a
+              // supplier must not rewrite the profit on orders already shipped.
+              costPrice: line.costPrice,
+            })),
+          },
+        },
+      });
+
+      /**
+       * Cash orders take stock at placement. No payment event is coming before
+       * the parcel leaves, so waiting for one would let two COD orders sell the
+       * same unit. Conditional, unlike the paid path: nothing has been collected
+       * yet, so refusing an order we cannot fill costs nothing, while
+       * overselling costs a cancellation and a customer.
+       */
+      if (isCod) {
+        for (const line of cart.lines) {
+          await moveStock(tx, {
+            productId: line.productId,
+            delta: -line.quantity,
+            reason: "SALE",
+            orderId: created.id,
+          });
+        }
+
+        // Prepaid books this the moment the money lands. Cash has no such moment
+        // before dispatch, so without this a single-use code stays reusable
+        // forever by choosing COD.
+        if (coupon) {
+          await recordRedemption(tx, {
+            couponId: coupon.couponId,
+            orderId: created.id,
+            userId: userId ?? null,
+            email,
+            amount: quote.discountTotal,
+          });
+        }
+      }
+
+      return created;
     });
 
-    const order = await prisma.order.create({
-      data: {
-        itemsTotal: cart.itemsTotal,
-        shippingAmount: shipping.amount,
-        discountTotal: quote.discountTotal,
-        couponId: coupon?.couponId ?? null,
-        couponCode: coupon?.code ?? null,
-        totalAmount,
-        taxTotal: tax.taxTotal,
-        cgstTotal: tax.cgstTotal,
-        sgstTotal: tax.sgstTotal,
-        igstTotal: tax.igstTotal,
-        placeOfSupply: tax.placeOfSupply,
-        courierId: shipping.courierId,
-        courierName: shipping.courierName,
-        shippingAddress,
-        email,
-        customerName: shippingAddress.name,
-        customerPhone: shippingAddress.phone,
-        razorpayOrderId: razorpayOrder.id,
-        userId,
-        items: {
-          // Indexed by position, not product id: computeTax maps over the lines
-          // it was given, so index i lines up even if a cart somehow carries the
-          // same product twice.
-          create: cart.lines.map((line, index) => ({
-            productId: line.productId,
-            quantity: line.quantity,
-            price: line.price,
-            // The rate tax was actually worked out at, not the product's, so a
-            // row never claims a rate applied while recording no tax.
-            gstRate: tax.lines[index]?.rate ?? line.gstRate,
-            taxableAmount: tax.lines[index]?.taxable ?? line.gross,
-            taxAmount: tax.lines[index]?.tax ?? 0,
-            // Snapshotted for the same reason as the rate: renegotiating with a
-            // supplier must not rewrite the profit on orders already shipped.
-            costPrice: line.costPrice,
-          })),
-        },
-      },
-    });
+    // A cash order has nothing to confirm through Razorpay, so this is the only
+    // moment it gets acknowledged. Prepaid waits for the payment to land.
+    if (isCod) {
+      void sendOrderConfirmation(order.id).catch((error) =>
+        console.error("COD confirmation email failed:", error)
+      );
+    }
 
     res.json({
       orderId: order.id,
-      razorpayOrderId: razorpayOrder.id,
+      razorpayOrderId: razorpayOrder?.id ?? null,
       amount: amountInPaise,
       currency: "INR",
-      keyId: process.env.RAZORPAY_KEY_ID,
+      keyId: razorpayOrder ? process.env.RAZORPAY_KEY_ID : null,
+      paymentMethod: quote.paymentMethod,
+      codFee: quote.codFee,
       itemsTotal: cart.itemsTotal,
       discountTotal: quote.discountTotal,
       shippingAmount: shipping.amount,
@@ -302,6 +365,16 @@ router.post("/create", async (req, res) => {
       },
     });
   } catch (error) {
+    // Only reachable on a cash order, where stock is taken before any money is
+    // promised. The whole transaction is rolled back, so no half-order survives.
+    if (error instanceof NotEnoughStockError) {
+      res.status(409).json({
+        error: "Someone just took the last one. Check the bag and try again.",
+        outOfStock: true,
+      });
+      return;
+    }
+
     const statusCode = (error as { statusCode?: number }).statusCode;
     if (statusCode) {
       res.status(statusCode).json({ error: (error as Error).message });
