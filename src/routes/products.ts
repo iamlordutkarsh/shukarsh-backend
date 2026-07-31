@@ -10,6 +10,8 @@ import {
   moveStock,
   serializeStockMove,
 } from "../lib/inventory";
+import { AttributeError, attributeAnswerSchema, saveProductAttributes } from "../lib/attributes";
+import { descendantIds } from "../lib/category";
 import { ratingSummaries, ratingSummary } from "../lib/reviews";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
@@ -89,6 +91,22 @@ const productSchema = z.object({
   costPrice: z.number().min(0).nullable().optional(),
   specs: z.array(specSchema).max(30).optional(),
   details: z.array(detailBlockSchema).max(12).optional(),
+  // Required on the label of anything packaged and sold online in India. Held
+  // loosely here and enforced by the category's own questions where a shop wants
+  // it mandatory: the catalogue predates these, and a save that suddenly refuses
+  // every existing product helps nobody.
+  countryOfOrigin: z.string().trim().max(60).optional().nullable(),
+  manufacturerName: z.string().trim().max(120).optional().nullable(),
+  manufacturerAddr: z.string().trim().max(300).optional().nullable(),
+  manufacturerPin: z
+    .string()
+    .trim()
+    .regex(/^\d{6}$/, "A pincode is six digits")
+    .optional()
+    .nullable()
+    .or(z.literal("")),
+  /** Answers to the category's questions, keyed by the definition's key. */
+  attributes: z.array(attributeAnswerSchema).max(60).optional(),
   categoryId: z.string().min(1),
 });
 
@@ -179,6 +197,7 @@ const productInclude: Prisma.ProductInclude = {
   category: { select: { id: true, name: true, slug: true } },
   variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
   colours: { orderBy: [{ position: "asc" }, { name: "asc" }] },
+  attributes: { include: { definition: true, option: true } },
 };
 
 const sortOptions = {
@@ -212,7 +231,10 @@ router.get("/", perCaller, async (req, res) => {
   const orderBy = sortKey && sortKey in sortOptions ? sortOptions[sortKey] : sortOptions.newest;
 
   const where: any = { isActive: true };
-  if (categoryId) where.categoryId = categoryId;
+  // Everything at or below the category asked for. Matching it exactly empties
+  // every page above the leaves: a shirt filed under Tshirts would show nothing
+  // on Men Fashion, which is the page the menu actually links to.
+  if (categoryId) where.categoryId = { in: await descendantIds(categoryId) };
   if (search) {
     where.OR = [
       { name: { contains: search, mode: "insensitive" } },
@@ -279,14 +301,17 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
 
   try {
     const opening = result.data.stock;
+    const { attributes, ...fields } = result.data;
 
     const product = await prisma.$transaction(async (tx) => {
       // Created empty and then filled through the ledger, so the number on the
       // shelf is the sum of its movements from the very first one. A product that
       // starts at 12 with nothing to say why is exactly the gap this closes.
       const created = await tx.product.create({
-        data: { ...result.data, stock: 0, gstRate: result.data.gstRate ?? defaultGstRate() },
+        data: { ...fields, stock: 0, gstRate: fields.gstRate ?? defaultGstRate() },
       });
+
+      await saveProductAttributes(tx, created.id, created.categoryId, attributes ?? []);
 
       if (opening > 0) {
         await moveStock(tx, {
@@ -297,11 +322,16 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
         });
       }
 
-      return { ...created, stock: opening };
+      return tx.product.findUnique({ where: { id: created.id }, include: productInclude });
     });
 
     res.status(201).json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
+    if (error instanceof AttributeError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+
     handleWriteError(res, error, {
       duplicate: "A product already uses that slug",
       related: "That category does not exist",
@@ -320,30 +350,42 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
   const id = req.params.id as string;
   // Handled separately below: writing it straight would move the shelf with no
   // record of why, which is the one thing the ledger exists to prevent.
-  const { stock: wantedStock, ...fields } = result.data;
+  const { stock: wantedStock, attributes, ...fields } = result.data;
 
   try {
     const product = await prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({ where: { id }, data: fields });
 
-      if (wantedStock === undefined || wantedStock === updated.stock) return updated;
+      // Re-checked against whichever category the product is in *after* this
+      // save, so moving it to a category that asks more questions is refused
+      // here rather than leaving it filed somewhere it cannot satisfy.
+      if (attributes) {
+        await saveProductAttributes(tx, id, updated.categoryId, attributes);
+      }
 
-      // A form posts where the count should end up, not by how much it moved, so
-      // the difference is worked out here and recorded as a correction.
-      const balance = await moveStock(tx, {
-        productId: id,
-        delta: wantedStock - updated.stock,
-        reason: "CORRECTION",
-        note: "Set from the product form",
-        userId: req.user!.id,
-        allowNegative: true,
-      });
+      if (wantedStock !== undefined && wantedStock !== updated.stock) {
+        // A form posts where the count should end up, not by how much it moved,
+        // so the difference is worked out here and recorded as a correction.
+        await moveStock(tx, {
+          productId: id,
+          delta: wantedStock - updated.stock,
+          reason: "CORRECTION",
+          note: "Set from the product form",
+          userId: req.user!.id,
+          allowNegative: true,
+        });
+      }
 
-      return { ...updated, stock: balance };
+      return tx.product.findUnique({ where: { id }, include: productInclude });
     });
 
     res.json({ product: serializeProduct(product, { includeCost: true }) });
   } catch (error) {
+    if (error instanceof AttributeError) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+
     handleWriteError(res, error, {
       missing: "Product not found",
       duplicate: "Another product already uses that slug",

@@ -1,3 +1,4 @@
+import { serializeProductAttributes, type SerializedProductAttribute } from "./attributes";
 import { LOW_STOCK_DEFAULT } from "./inventory";
 import { EMPTY_RATING, type RatingSummary } from "./reviews";
 
@@ -18,6 +19,16 @@ export interface SerializedProduct {
   heightCm: number;
   hsn: string | null;
   gstRate: number;
+  countryOfOrigin: string | null;
+  manufacturerName: string | null;
+  manufacturerAddr: string | null;
+  manufacturerPin: string | null;
+  /**
+   * What this product answered to its category's questions, in the order the
+   * category asks them. Structured, filterable, and the reason a spec table can
+   * be consistent across a catalogue rather than however each admin typed it.
+   */
+  attributes: SerializedProductAttribute[];
   /** The spec table, in the order the shop typed it. Empty when none was given. */
   specs: ProductSpec[];
   /** The long copy, as blocks. Empty when none was given. */
@@ -213,6 +224,11 @@ export function serializeProduct(
     heightCm: product.heightCm,
     hsn: product.hsn,
     gstRate: Number(product.gstRate ?? 0),
+    countryOfOrigin: product.countryOfOrigin ?? null,
+    manufacturerName: product.manufacturerName ?? null,
+    manufacturerAddr: product.manufacturerAddr ?? null,
+    manufacturerPin: product.manufacturerPin ?? null,
+    attributes: serializeProductAttributes(product.attributes ?? []),
     specs: readSpecs(product.specs),
     details: readDetails(product.details),
     // A read that did not ask for them says "no variants" rather than nothing, so
