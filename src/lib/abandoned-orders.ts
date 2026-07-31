@@ -43,6 +43,10 @@ export async function remindAbandonedOrders(limit = 50): Promise<number> {
     where: {
       paymentStatus: "PENDING",
       status: "PENDING",
+      // Cash orders are unpaid by design until the courier collects. Without
+      // this, each one gets an email asking the customer to go back and finish a
+      // checkout they already completed.
+      paymentMethod: "PREPAID",
       razorpayPaymentId: null,
       recoveryEmailAt: null,
       createdAt: { lt: cutoff, gt: expiresAt },
@@ -111,6 +115,10 @@ export async function expireAbandonedOrders(limit = 200): Promise<number> {
     where: {
       paymentStatus: "PENDING",
       status: "PENDING",
+      // Same reason, with sharper teeth: this one cancels what it finds, so a
+      // cash order waiting to be packed would be called off a few hours after
+      // the customer placed it.
+      paymentMethod: "PREPAID",
       razorpayPaymentId: null,
       createdAt: { lt: cutoff },
     },
