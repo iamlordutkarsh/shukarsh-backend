@@ -188,18 +188,18 @@ export async function lowStockProducts(limit = 50) {
       variants: {
         where: { isActive: true },
         orderBy: [{ position: "asc" }, { label: "asc" }],
-        select: { id: true, label: true, stock: true },
+        select: { id: true, label: true, stock: true, colour: { select: { name: true } } },
       },
     },
   });
 
   /**
-   * A size is a shelf, so it is the thing that runs out.
+   * A colour and size is a shelf, so it is the thing that runs out.
    *
    * Comparing a product's total against the threshold hides the failure that
-   * matters once there are sizes: 41 jackets in stock and not one of them a
-   * medium reads as healthy, and nobody reorders mediums. So a product with
-   * sizes is reported size by size and never as a total, against the same
+   * matters once there are options: 41 jackets in stock and not one of them a
+   * blue medium reads as healthy, and nobody reorders blue mediums. So a product
+   * with options is reported one by one and never as a total, against the same
    * threshold, because that number is the shop saying "reorder at this many".
    */
   const low = products.flatMap((product) => {
@@ -213,7 +213,7 @@ export async function lowStockProducts(limit = 50) {
       .filter((variant) => variant.stock <= product.lowStockThreshold)
       .map((variant) => ({
         id: product.id,
-        name: `${product.name} · ${variant.label}`,
+        name: [product.name, variant.colour?.name, variant.label].filter(Boolean).join(" · "),
         slug: product.slug,
         stock: variant.stock,
         lowStockThreshold: product.lowStockThreshold,
