@@ -271,6 +271,94 @@ router.post("/:id/refund", authenticate, requireAdmin, async (req, res) => {
   }
 });
 
+const manualRefundSchema = z.object({
+  /**
+   * The UPI or bank reference for money that has already left. Stored in the
+   * same column as a Razorpay refund id, which is unique, so pasting one
+   * reference against two returns is refused rather than double counted.
+   */
+  reference: z.string().trim().min(4).max(64),
+});
+
+/**
+ * Records a refund that was paid by hand.
+ *
+ * A cash order has no payment to reverse, so the money goes out over UPI and
+ * this is what makes the shop's own records agree with its bank. Deliberately a
+ * separate route: it moves nothing, it only writes down what a human already
+ * did, and mixing that into the button that actually moves money would make it
+ * possible to close a return by typing a reference.
+ */
+router.post("/:id/refund/manual", authenticate, requireAdmin, async (req, res) => {
+  const id = req.params.id as string;
+  const parsed = manualRefundSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Enter the UPI or bank reference for the payment you made." });
+    return;
+  }
+
+  const request = await prisma.returnRequest.findUnique({ where: { id }, include: adminInclude });
+
+  if (!request) {
+    res.status(404).json({ error: "Return not found" });
+    return;
+  }
+
+  if (request.refundId) {
+    res.status(409).json({ error: "This return has already been refunded." });
+    return;
+  }
+
+  if (request.outcome !== "REFUND") {
+    res.status(400).json({ error: "This return was agreed as an exchange, so there is nothing to refund." });
+    return;
+  }
+
+  if (request.status !== "RECEIVED" && request.status !== "COMPLETED") {
+    res.status(409).json({ error: "Mark the parcel as received before recording any money back." });
+    return;
+  }
+
+  // An order with a Razorpay payment must go back the way it came, or the
+  // customer is refunded twice and the books never reconcile.
+  if (request.order.razorpayPaymentId) {
+    res.status(400).json({
+      error: "This order was paid through Razorpay, so refund it with the button above instead.",
+    });
+    return;
+  }
+
+  const amount = Number(request.refundAmount ?? 0);
+  if (amount <= 0) {
+    res.status(400).json({ error: "This return has no refund amount on it." });
+    return;
+  }
+
+  try {
+    const now = new Date();
+    const updated = await prisma.returnRequest.update({
+      where: { id },
+      data: {
+        refundId: parsed.data.reference,
+        refundedAt: now,
+        refundStatus: "manual",
+        refundError: null,
+        ...(request.status === "RECEIVED" ? { status: "COMPLETED", completedAt: now } : {}),
+      },
+      include: adminInclude,
+    });
+
+    if (request.status === "RECEIVED") void sendReturnCompleted(id);
+
+    res.json({ return: serializeAdminReturn(updated) });
+  } catch (error) {
+    handleWriteError(res, error, {
+      duplicate: "That reference is already recorded against another refund.",
+      fallback: "Could not record this refund",
+    });
+  }
+});
+
 /**
  * Whether every unit on the order has now come back.
  *
