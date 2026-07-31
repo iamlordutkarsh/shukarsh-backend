@@ -1,4 +1,5 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { handleWriteError } from "../lib/write-errors";
@@ -14,6 +15,46 @@ import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
 
 const router = Router();
+
+/** One row of the spec table: "Material", "Stainless steel". */
+const specSchema = z.object({
+  label: z.string().trim().min(1).max(40),
+  value: z.string().trim().min(1).max(200),
+});
+
+/**
+ * One block of the long copy.
+ *
+ * A discriminated union rather than one loose object, so a block cannot arrive
+ * calling itself an FAQ while carrying a body: the product page switches on
+ * `kind` to decide what to draw, and a shape it does not expect is a block that
+ * renders as nothing at all.
+ */
+const detailBlockSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("text"),
+    title: z.string().trim().min(1).max(80),
+    body: z.string().trim().min(1).max(4000),
+  }),
+  z.object({
+    kind: z.literal("highlights"),
+    title: z.string().trim().min(1).max(80),
+    items: z.array(z.string().trim().min(1).max(200)).min(1).max(12),
+  }),
+  z.object({
+    kind: z.literal("faq"),
+    title: z.string().trim().min(1).max(80),
+    items: z
+      .array(
+        z.object({
+          question: z.string().trim().min(1).max(200),
+          answer: z.string().trim().min(1).max(2000),
+        })
+      )
+      .min(1)
+      .max(12),
+  }),
+]);
 
 const productSchema = z.object({
   name: z.string().min(1),
@@ -46,6 +87,8 @@ const productSchema = z.object({
     .optional(),
   // Net of GST: input tax credit means the tax paid to a supplier is not a cost.
   costPrice: z.number().min(0).nullable().optional(),
+  specs: z.array(specSchema).max(30).optional(),
+  details: z.array(detailBlockSchema).max(12).optional(),
   categoryId: z.string().min(1),
 });
 
@@ -56,7 +99,7 @@ const stockAdjustSchema = z.object({
   }),
   reason: z.enum(["RECEIVED", "CORRECTION", "DAMAGE"]),
   note: z.string().trim().max(200).optional(),
-  /** Which size received them. Required once a product has sizes. */
+  /** Which colour and size received them. Required once a product has options. */
   variantId: z.string().uuid().optional(),
 });
 
@@ -66,21 +109,77 @@ class UnknownVariantError extends Error {}
 
 const variantsSchema = z.object({
   /**
-   * The whole set, in the order they should appear. Sent complete rather than one
-   * at a time because "S, M, L" is one decision, and a half-applied set would
-   * leave a product selling sizes nobody chose.
+   * The colours, in swatch order. Sent whole for the same reason the cells are.
+   */
+  colours: z
+    .array(
+      z.object({
+        /** Absent creates it. Present must already belong to this product. */
+        id: z.string().uuid().optional(),
+        name: z.string().trim().min(1).max(40),
+        /** `#rrggbb`, or nothing for a colour that has no sensible hex. */
+        hex: z
+          .string()
+          .trim()
+          .regex(/^#[0-9a-fA-F]{6}$/, "A colour has to be a hex code like #1a2b3c")
+          .optional()
+          .nullable(),
+        images: z.array(z.string()).max(8).default([]),
+        isActive: z.boolean().default(true),
+      })
+    )
+    .max(20)
+    .default([]),
+  /**
+   * The whole set of buyable cells, in the order they should appear. Sent
+   * complete rather than one at a time because "S, M, L in red and blue" is one
+   * decision, and half of it applied is a product selling combinations nobody
+   * chose.
    */
   variants: z
     .array(
       z.object({
         /** Absent creates it. Present must already belong to this product. */
         id: z.string().uuid().optional(),
-        label: z.string().trim().min(1).max(24),
+        /**
+         * Which colour this cell is, named rather than referenced: the admin
+         * screen builds the matrix before the new colours have ids, so the
+         * payload has to be able to point at one it is creating in the same
+         * breath. Matched against `colours` above, case-insensitively.
+         */
+        colourName: z.string().trim().max(40).optional().nullable(),
+        /** Empty for a product sold by colour alone. */
+        label: z.string().trim().max(24).default(""),
+        /**
+         * What this cell costs, when it differs from the product. Null clears an
+         * override back to the product's own price, which is why it is nullable
+         * rather than merely optional: "leave it alone" and "it costs the normal
+         * amount again" are different instructions.
+         */
+        price: z.number().positive().nullable().optional(),
         isActive: z.boolean().default(true),
       })
     )
-    .max(30),
+    .max(200),
 });
+
+/** A cell has to be one of something. Neither axis named is not a variant. */
+class NamelessVariantError extends Error {}
+/** A cell pointing at a colour that is not in the same payload. */
+class UnknownColourError extends Error {}
+
+/**
+ * Everything serializeProduct needs, in the order things are drawn.
+ *
+ * Hoisted because five reads want it and a sixth that forgets the colours would
+ * quietly serve a product with no swatches rather than fail: the serializer
+ * cannot tell a product that has none from a query that did not ask.
+ */
+const productInclude: Prisma.ProductInclude = {
+  category: { select: { id: true, name: true, slug: true } },
+  variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+  colours: { orderBy: [{ position: "asc" }, { name: "asc" }] },
+};
 
 const sortOptions = {
   newest: { createdAt: "desc" },
@@ -127,10 +226,7 @@ router.get("/", perCaller, async (req, res) => {
       skip: (page - 1) * limit,
       take: limit,
       orderBy,
-      include: {
-        category: { select: { id: true, name: true, slug: true } },
-        variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
-      },
+      include: productInclude,
     }),
     prisma.product.count({ where }),
   ]);
@@ -155,10 +251,7 @@ router.get("/", perCaller, async (req, res) => {
 router.get("/:slug", perCaller, async (req, res) => {
   const product = await prisma.product.findUnique({
     where: { slug: req.params.slug as string },
-    include: {
-      category: { select: { id: true, name: true, slug: true } },
-      variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
-    },
+    include: productInclude,
   });
 
   if (!product) {
@@ -278,21 +371,24 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
 
   try {
     const product = await prisma.$transaction(async (tx) => {
-      // Which row holds this product's stock. Once it has sizes the total is only
-      // their sum, so an adjustment that does not name one has nowhere to land.
-      const sizes = await tx.productVariant.findMany({
-        where: { productId: id, isActive: true },
+      // Which row holds this product's stock. Once it has options the total is
+      // only their sum, so an adjustment that does not name one has nowhere to
+      // land. A cell under a switched-off colour is not one of them: its stock is
+      // withdrawn along with the colour, and receiving against it would put units
+      // somewhere nobody can sell them from.
+      const cells = await tx.productVariant.findMany({
+        where: { productId: id, isActive: true, OR: [{ colourId: null }, { colour: { isActive: true } }] },
         select: { id: true },
       });
 
-      if (sizes.length > 0) {
+      if (cells.length > 0) {
         if (!result.data.variantId) throw new VariantRequiredError();
-        if (!sizes.some((size) => size.id === result.data.variantId)) throw new UnknownVariantError();
+        if (!cells.some((cell) => cell.id === result.data.variantId)) throw new UnknownVariantError();
       }
 
       const balance = await moveStock(tx, {
         productId: id,
-        variantId: sizes.length > 0 ? result.data.variantId : null,
+        variantId: cells.length > 0 ? result.data.variantId : null,
         delta: result.data.delta,
         reason: result.data.reason,
         note: result.data.note,
@@ -303,10 +399,7 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
 
       const updated = await tx.product.findUnique({
         where: { id },
-        include: {
-          category: { select: { id: true, name: true, slug: true } },
-          variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
-        },
+        include: productInclude,
       });
 
       return { updated, balance };
@@ -322,12 +415,12 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
     });
   } catch (error) {
     if (error instanceof VariantRequiredError) {
-      res.status(400).json({ error: "This product comes in sizes, so say which size this is for." });
+      res.status(400).json({ error: "This product comes in options, so say which one this is for." });
       return;
     }
 
     if (error instanceof UnknownVariantError) {
-      res.status(400).json({ error: "That size does not belong to this product." });
+      res.status(400).json({ error: "That option does not belong to this product." });
       return;
     }
 
@@ -344,15 +437,20 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
 });
 
 /**
- * Sets the whole list of sizes a product comes in.
+ * Sets the whole set of colours and sizes a product comes in.
  *
- * Sent as one list rather than one size at a time, because "S, M, L" is a single
- * decision and half of it applied is a product selling sizes nobody chose.
+ * Sent as one set rather than one at a time, because "S, M, L in red and blue"
+ * is a single decision and half of it applied is a product selling combinations
+ * nobody chose.
  *
- * A size that disappears from the list is switched off rather than deleted, as
+ * One that disappears from the set is switched off rather than deleted, as
  * soon as it has any history: its stock ledger and the orders that name it have
- * to survive. Only a size that never moved and never sold is actually removed,
+ * to survive. Only one that never moved and never sold is actually removed,
  * which is what makes correcting a typo possible.
+ *
+ * Colours are saved in the same request and written first, so a cell may name a
+ * colour this very payload is creating. The alternative is two round trips with
+ * a product that sells nothing in between.
  */
 router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
   const result = variantsSchema.safeParse(req.body);
@@ -363,24 +461,84 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
 
   const id = req.params.id as string;
   const wanted = result.data.variants;
+  const wantedColours = result.data.colours;
 
-  const labels = wanted.map((variant) => variant.label.toLowerCase());
-  if (new Set(labels).size !== labels.length) {
-    res.status(400).json({ error: "Two sizes cannot have the same name." });
+  const colourNames = wantedColours.map((colour) => colour.name.toLowerCase());
+  if (new Set(colourNames).size !== colourNames.length) {
+    res.status(400).json({ error: "Two colours cannot have the same name." });
+    return;
+  }
+
+  // The database can only enforce this on a product that has colours, because
+  // two nulls do not collide in a unique index. Checked here for every shape,
+  // and case-insensitively, so "M" beside "m" is refused as well.
+  const cells = wanted.map(
+    (variant) => `${variant.colourName?.trim().toLowerCase() ?? ""}::${variant.label.toLowerCase()}`
+  );
+  if (new Set(cells).size !== cells.length) {
+    res.status(400).json({ error: "Two options cannot be the same colour and size." });
     return;
   }
 
   try {
     const product = await prisma.$transaction(async (tx) => {
-      const existing = await tx.productVariant.findMany({ where: { productId: id } });
-      if (existing.length === 0 && wanted.length === 0) {
-        return tx.product.findUnique({
-          where: { id },
-          include: {
-            category: { select: { id: true, name: true, slug: true } },
-            variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
-          },
-        });
+      const [existing, existingColours] = await Promise.all([
+        tx.productVariant.findMany({ where: { productId: id } }),
+        tx.productColour.findMany({ where: { productId: id } }),
+      ]);
+
+      const nothingBefore = existing.length === 0 && existingColours.length === 0;
+      const nothingAfter = wanted.length === 0 && wantedColours.length === 0;
+      if (nothingBefore && nothingAfter) {
+        return tx.product.findUnique({ where: { id }, include: productInclude });
+      }
+
+      /**
+       * Colours first, so the cells below have something to point at.
+       *
+       * A colour that disappears is dropped only when nothing under it ever
+       * moved or sold; otherwise it is switched off, which switches off its
+       * cells with it. Deleting it would cascade the variants away and take
+       * their ledger with them.
+       */
+      const keptColourIds = new Set(
+        wantedColours.map((colour) => colour.id).filter(Boolean) as string[]
+      );
+
+      for (const gone of existingColours.filter((colour) => !keptColourIds.has(colour.id))) {
+        const [moves, sold] = await Promise.all([
+          tx.stockMove.count({ where: { variant: { colourId: gone.id } } }),
+          tx.orderItem.count({ where: { variant: { colourId: gone.id } } }),
+        ]);
+
+        if (moves === 0 && sold === 0) {
+          await tx.productColour.delete({ where: { id: gone.id } });
+        } else {
+          await tx.productColour.update({ where: { id: gone.id }, data: { isActive: false } });
+          await tx.productVariant.updateMany({
+            where: { colourId: gone.id },
+            data: { isActive: false },
+          });
+        }
+      }
+
+      /** Name to id, so a cell can name a colour being created in this request. */
+      const colourIdByName = new Map<string, string>();
+
+      for (const [position, colour] of wantedColours.entries()) {
+        const data = {
+          name: colour.name,
+          hex: colour.hex ?? null,
+          images: colour.images,
+          isActive: colour.isActive,
+          position,
+        };
+
+        const saved = colour.id
+          ? await tx.productColour.update({ where: { id: colour.id }, data })
+          : await tx.productColour.create({ data: { productId: id, ...data } });
+
+        colourIdByName.set(colour.name.trim().toLowerCase(), saved.id);
       }
 
       const keptIds = new Set(wanted.map((variant) => variant.id).filter(Boolean) as string[]);
@@ -399,40 +557,48 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
       }
 
       for (const [position, variant] of wanted.entries()) {
+        const wantsColour = variant.colourName?.trim();
+        const colourId = wantsColour ? colourIdByName.get(wantsColour.toLowerCase()) : null;
+
+        // A cell naming a colour the payload did not send would silently become
+        // a colourless one, which on a product that has colours is a second
+        // shelf nobody can see or pick.
+        if (wantsColour && !colourId) throw new UnknownColourError(wantsColour);
+        if (!colourId && !variant.label) throw new NamelessVariantError();
+
+        const data = {
+          colourId: colourId ?? null,
+          label: variant.label,
+          // Undefined leaves an override alone; null clears it back to the
+          // product's price. zod keeps the two apart, so this does too.
+          ...(variant.price !== undefined ? { price: variant.price } : {}),
+          isActive: variant.isActive,
+          position,
+        };
+
         if (variant.id) {
-          await tx.productVariant.update({
-            where: { id: variant.id },
-            data: { label: variant.label, isActive: variant.isActive, position },
-          });
+          await tx.productVariant.update({ where: { id: variant.id }, data });
         } else {
-          await tx.productVariant.create({
-            data: { productId: id, label: variant.label, isActive: variant.isActive, position },
-          });
+          await tx.productVariant.create({ data: { productId: id, ...data } });
         }
       }
 
-      // The moment sizes exist they own the stock, and nobody can say how many of
-      // that shelf of 41 jackets were mediums. Rather than guess, the total is
-      // written down to zero through the ledger so the shop counts each size in.
+      // The moment cells exist they own the stock, and nobody can say how many of
+      // that shelf of 41 jackets were blue mediums. Rather than guess, the total
+      // is written down to zero through the ledger so the shop counts each in.
       const current = await tx.product.findUnique({ where: { id }, select: { stock: true } });
       if (existing.length === 0 && wanted.length > 0 && (current?.stock ?? 0) !== 0) {
         await moveStock(tx, {
           productId: id,
           delta: -(current?.stock ?? 0),
           reason: "CORRECTION",
-          note: "Split into sizes: count each size in",
+          note: "Split into options: count each one in",
           userId: req.user!.id,
           allowNegative: true,
         });
       }
 
-      return tx.product.findUnique({
-        where: { id },
-        include: {
-          category: { select: { id: true, name: true, slug: true } },
-          variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
-        },
-      });
+      return tx.product.findUnique({ where: { id }, include: productInclude });
     });
 
     if (!product) {
@@ -442,10 +608,20 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
 
     res.json({ product: serializeProduct(product, { includeCost: true, includeHidden: true }) });
   } catch (error) {
+    if (error instanceof UnknownColourError) {
+      res.status(400).json({ error: `No colour called "${error.message}" was sent with these options.` });
+      return;
+    }
+
+    if (error instanceof NamelessVariantError) {
+      res.status(400).json({ error: "An option needs a colour, a size, or both." });
+      return;
+    }
+
     handleWriteError(res, error, {
       missing: "Product not found",
-      duplicate: "This product already has a size with that name",
-      fallback: "Could not save these sizes",
+      duplicate: "This product already has an option with that colour and size",
+      fallback: "Could not save these options",
     });
   }
 });
