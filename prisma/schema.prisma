@@ -108,13 +108,118 @@ model Category {
   slug        String           @unique
   description String?
   image       String?
+  /// Order among its siblings. A menu is not alphabetical: "Men Top Wear" comes
+  /// before "Men Inner & Sleepwear" because that is the order the shop sells in.
+  position    Int              @default(0)
   parentId    String?
   parent      Category?        @relation("CategoryHierarchy", fields: [parentId], references: [id])
   children    Category[]       @relation("CategoryHierarchy")
   products    Product[]
   coupons     CouponCategory[]
+  attributes  AttributeDefinition[]
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
+
+  @@index([parentId])
+}
+
+/// What kind of answer an attribute takes.
+enum AttributeKind {
+  /// One of a fixed list. The common case: fabric, neck, sleeve length.
+  SELECT
+  /// Any number of a fixed list, for something like "occasion".
+  MULTISELECT
+  /// Free text, for the handful of things no list can cover.
+  TEXT
+  /// A quantity, with `unit` saying what of.
+  NUMBER
+}
+
+/// One question a category asks about its products.
+///
+/// Owned by a category and **inherited by everything under it**, which is what
+/// makes the tree worth having: "Country of origin" is asked once at the root,
+/// "Sleeve length" only under Tshirts, and picking a category is what decides the
+/// form. A key defined again lower down overrides the one above it, so a branch
+/// can narrow a general question without the root having to know.
+///
+/// Separate from Product.specs, which stays as the escape hatch for a one-off
+/// fact that does not deserve a definition across a whole category.
+model AttributeDefinition {
+  id         String        @id @default(uuid())
+  categoryId String
+  category   Category      @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  /// Stable and machine-readable, because it ends up in a filter query string.
+  /// Renaming the label must not break a link somebody bookmarked.
+  key        String
+  /// What the admin and the shopper read: "Sleeve Length".
+  label      String
+  kind       AttributeKind @default(SELECT)
+  /// What a NUMBER is counted in: "gsm", "ml". Null for every other kind.
+  unit       String?
+  /// A product in this category cannot be saved without answering it.
+  required   Boolean       @default(false)
+  /// Offered as a facet on the catalogue. Only ever true for SELECT and
+  /// MULTISELECT: nobody filters a shop by free text.
+  filterable Boolean       @default(false)
+  position   Int           @default(0)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  options AttributeOption[]
+  values  ProductAttribute[]
+
+  /// One question per key per category. The same key on a child is the override.
+  @@unique([categoryId, key])
+  @@index([categoryId])
+}
+
+/// One allowed answer to a SELECT or MULTISELECT question.
+///
+/// A fixed list rather than free text is the whole point: "Cotton", "100% cotton"
+/// and "cotton blend" typed into three products are three values nothing can
+/// filter on, and that is what a spec table of free text degrades into.
+model AttributeOption {
+  id           String              @id @default(uuid())
+  definitionId String
+  definition   AttributeDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  value        String
+  position     Int                 @default(0)
+  createdAt    DateTime            @default(now())
+
+  values ProductAttribute[]
+
+  @@unique([definitionId, value])
+  @@index([definitionId])
+}
+
+/// What one product answered.
+///
+/// Which column holds it depends on the definition's kind, and exactly one of
+/// them is ever set. A MULTISELECT is several rows against one definition, which
+/// is why the option is part of the key rather than the definition alone.
+model ProductAttribute {
+  id           String              @id @default(uuid())
+  productId    String
+  product      Product             @relation(fields: [productId], references: [id], onDelete: Cascade)
+  definitionId String
+  definition   AttributeDefinition @relation(fields: [definitionId], references: [id], onDelete: Cascade)
+  /// Set for SELECT and MULTISELECT.
+  optionId     String?
+  option       AttributeOption?    @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  /// Set for TEXT.
+  valueText    String?
+  /// Set for NUMBER.
+  valueNumber  Decimal?            @db.Decimal(12, 3)
+  createdAt    DateTime            @default(now())
+
+  /// Binds on the picked kinds. It cannot bind for TEXT or NUMBER, where optionId
+  /// is null and Postgres counts two nulls as different, so the write path is
+  /// what stops a product answering the same question twice.
+  @@unique([productId, definitionId, optionId])
+  @@index([productId])
+  /// The faceted read: every product whose answer to this question is that option.
+  @@index([definitionId, optionId])
 }
 
 model Product {
@@ -151,11 +256,23 @@ model Product {
   /// tax paid to a supplier is not really a cost. Never leaves the API to
   /// anyone but an admin: see serializeProduct.
   costPrice         Decimal? @db.Decimal(10, 2)
+  /// Where it was made. Required on the label of anything packaged and sold
+  /// online in India, so it is a column rather than an attribute: a category
+  /// nobody defined it on would silently drop a legal requirement.
+  countryOfOrigin   String?
+  /// Who packed it, and where. The Legal Metrology (Packaged Commodities) Rules
+  /// want a name and an address a customer can actually write to, which is why
+  /// the pincode is kept apart from the rest of the address rather than trusted
+  /// to be somewhere inside it.
+  manufacturerName  String?
+  manufacturerAddr  String?
+  manufacturerPin   String?
   categoryId        String
   category          Category @relation(fields: [categoryId], references: [id])
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
+  attributes ProductAttribute[]
   orderItems OrderItem[]
   reviews    Review[]
   wishlisted WishlistItem[]
