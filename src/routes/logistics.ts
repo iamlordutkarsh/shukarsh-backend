@@ -12,6 +12,7 @@ import { sendDispatchNotice } from "../lib/notifications";
 import { applyOrderStatus, nextOrderStatus } from "../lib/order-status";
 import { syncActiveShipments, syncActiveShipmentsThrottled } from "../lib/tracking-sync";
 import { pickCourier, priceCart, quoteShipping } from "../lib/shipping";
+import { codPolicy } from "../lib/cod-policy";
 import { freeDeliveryShortfall, shippingFee, shippingPolicy } from "../lib/shipping-policy";
 import { createTtlCache, type Parcel } from "../lib/parcel";
 import {
@@ -89,12 +90,16 @@ router.get("/config", (_req, res) => {
   // parcel goes, so the bag can state it before anyone types an address, which
   // is the whole point of not pricing delivery off a courier rate.
   const policy = shippingPolicy();
+  // Same reasoning for COD: the fee and the cap are the shop's own rules, and
+  // the policy pages have to state them without waiting for a bag to exist.
+  const cod = codPolicy();
 
   res.json({
     enabled: isShiprocketConfigured() && Boolean(pickupPincode()),
     pickupPincode: pickupPincode() || null,
     freeAbove: policy.freeAbove,
     flatFee: policy.flatFee,
+    cod: { enabled: cod.enabled, fee: cod.fee, maxCollectable: cod.maxCollectable },
   });
 });
 
