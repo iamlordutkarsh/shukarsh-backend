@@ -48,8 +48,23 @@ export function codAllowed(collectable: number): boolean {
  * Returns the fee and the resulting amount together, so a caller cannot add one
  * without checking the other against the cap.
  */
-export function codCharge(prepaidTotal: number): { fee: number; collectable: number; allowed: boolean } {
-  const { fee } = codPolicy();
+export function codCharge(prepaidTotal: number): {
+  fee: number;
+  collectable: number;
+  allowed: boolean;
+  /** Worded for the customer, because a refusal with no reason reads as a bug. */
+  reason: string | null;
+} {
+  const { fee, enabled, maxCollectable } = codPolicy();
   const collectable = Math.round((prepaidTotal + fee) * 100) / 100;
-  return { fee, collectable, allowed: codAllowed(collectable) };
+  const allowed = codAllowed(collectable);
+
+  let reason: string | null = null;
+  if (!allowed) {
+    reason = enabled
+      ? `Cash on delivery is available on orders up to ₹${maxCollectable.toLocaleString("en-IN")}, including the ₹${fee} fee.`
+      : "Cash on delivery is not available at the moment.";
+  }
+
+  return { fee, collectable, allowed, reason };
 }

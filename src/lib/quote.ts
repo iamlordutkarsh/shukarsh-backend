@@ -1,3 +1,5 @@
+import type { PaymentMethod } from "@prisma/client";
+import { codCharge } from "./cod-policy";
 import { evaluateCoupon, findCoupon, type AppliedCoupon } from "./coupon";
 import { shippingFee } from "./shipping-policy";
 import { priceCart, resolveShipping, type PricedCart, type ResolvedShipping } from "./shipping";
@@ -11,6 +13,8 @@ export interface QuoteInput {
   couponCode?: string | null;
   userId?: string | null;
   email?: string | null;
+  /** Defaults to prepaid, so an old caller cannot accidentally quote COD. */
+  paymentMethod?: PaymentMethod;
 }
 
 export interface Quote {
@@ -24,6 +28,12 @@ export interface Quote {
   itemsTotal: number;
   discountTotal: number;
   shippingAmount: number;
+  /** What COD is being charged on this order. Zero on a prepaid one. */
+  codFee: number;
+  /** What the order is actually being paid by, after the cap is applied. */
+  paymentMethod: PaymentMethod;
+  /** Set when COD was asked for and refused, so checkout can say why. */
+  codError: string | null;
   totalAmount: number;
   /** What each line is worth after its share of the discount came off. */
   netLineGross: number[];
@@ -91,6 +101,15 @@ export async function buildQuote(input: QuoteInput): Promise<Quote> {
 
   const shipping = coupon?.freeShipping ? { ...quotedShipping, amount: 0 } : quotedShipping;
 
+  /**
+   * COD is decided last, on the finished total, and a cart over the cap quietly
+   * becomes prepaid rather than erroring: the customer can still buy, and
+   * checkout reads codError to say why the option went away. /create must
+   * therefore trust the method this returns and not the one it was handed.
+   */
+  const cod = input.paymentMethod === "COD" ? codCharge(round2(netItemsTotal + shipping.amount)) : null;
+  const codFee = cod?.allowed ? cod.fee : 0;
+
   const tax = computeTax({
     lines: cart.lines.map((line, index) => ({
       productId: line.productId,
@@ -98,6 +117,7 @@ export async function buildQuote(input: QuoteInput): Promise<Quote> {
       rate: line.gstRate,
     })),
     shippingGross: shipping.amount,
+    codGross: codFee,
     buyerState: input.state ?? null,
   });
 
@@ -110,7 +130,10 @@ export async function buildQuote(input: QuoteInput): Promise<Quote> {
     itemsTotal: cart.itemsTotal,
     discountTotal,
     shippingAmount: shipping.amount,
-    totalAmount: round2(netItemsTotal + shipping.amount),
+    codFee,
+    paymentMethod: cod?.allowed ? "COD" : "PREPAID",
+    codError: cod && !cod.allowed ? cod.reason : null,
+    totalAmount: round2(netItemsTotal + shipping.amount + codFee),
     netLineGross,
   };
 }
@@ -121,6 +144,9 @@ export function serializeQuote(quote: Quote) {
     itemsTotal: quote.itemsTotal,
     discountTotal: quote.discountTotal,
     shippingAmount: quote.shippingAmount,
+    codFee: quote.codFee,
+    paymentMethod: quote.paymentMethod,
+    codError: quote.codError,
     totalAmount: quote.totalAmount,
     courierId: quote.shipping.courierId,
     courierName: quote.shipping.courierName,
