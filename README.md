@@ -223,6 +223,86 @@ Both paths converge on the same conditional update, so whichever arrives second
 sees the order already paid and skips the stock decrement rather than running it
 twice.
 
+## How the shop works
+
+### An order's life
+
+A status only ever moves forward, and `CANCELLED` and `RETURNED` are final, so a
+courier scan that arrives a day late cannot reopen a closed order.
+
+```mermaid
+stateDiagram-v2
+    [*] --> PENDING: checkout writes the order
+    PENDING --> PROCESSING: shop approves
+    PROCESSING --> SHIPPED: courier collects
+    SHIPPED --> DELIVERED: courier delivers
+    DELIVERED --> RETURNED: every unit came back
+    PENDING --> CANCELLED: unpaid too long, or by hand
+    PROCESSING --> CANCELLED: by hand
+    SHIPPED --> CANCELLED: refused at the door
+    CANCELLED --> PROCESSING: reopened by hand, takes the stock again
+```
+
+Payment is a separate axis, and this is where the two ways of paying part company.
+
+```mermaid
+flowchart TD
+    Q["POST /orders/quote<br/>prices the bag"] --> P{"paymentMethod"}
+    P -->|PREPAID| RZ["Razorpay order created<br/>no stock taken yet"]
+    RZ --> W{"payment.captured"}
+    W -->|"/verify or webhook, whichever is first"| PAID["PAID · stock taken · coupon booked · receipt"]
+    W -->|"never: tab closed, card failed"| SWEEP["cancelled after ABANDONED_ORDER_HOURS<br/>coupon released"]
+    P -->|COD| CODP["stock taken now · coupon booked · receipt"]
+    CODP --> DEL["courier delivers"]
+    DEL --> CASH["PAID · paidAt set · cash is in"]
+```
+
+| | Prepaid | Cash on delivery |
+| --- | --- | --- |
+| Stock is taken | when the payment lands | when the order is placed |
+| Coupon redemption booked | at payment | at placement |
+| `paidAt` set | at payment | at delivery |
+| Abandoned sweep | cancels it, and the nudge email | skips it entirely |
+| Dispatch allowed | once paid | straight away |
+| Extra charge | none | `COD_FEE`, taxed like delivery |
+| Refund | Razorpay, one button | UPI by hand, reference recorded |
+
+Cash is on unless `COD_ENABLED` is the string `false`, adds `COD_FEE` (49), and is
+refused above `COD_MAX` (3000) counted on the collectable amount with the fee in
+it. Over the cap the quote does not fail: it prices as prepaid and returns
+`codError`, so the page can explain itself.
+
+<details>
+<summary>Why the cap is on the collectable amount, and why cash orders take stock early</summary>
+
+The cap is judged on the whole sum at risk at the door rather than the value of
+the goods, because a refused parcel costs the shop both legs of shipping and
+returns stock that may no longer be sellable.
+
+Taking stock at placement looks eager, but for a cash order no payment is ever
+coming before dispatch, so the alternative is shipping units the catalogue still
+thinks are for sale. That also means cancelling has to give them back, which is
+why `applyOrderStatus` asks whether the order *holds* stock rather than whether it
+is paid. Four places used to test `paymentStatus === "PAID"` and all four were
+wrong for cash: stock, dispatch, the abandoned sweeps, and revenue reporting,
+which reads `paidAt`.
+
+Delivery is what sets `paidAt` on a cash order because that is when the money
+exists. The courier's remittance arrives later, but the sale happened at the door.
+
+</details>
+
+<details>
+<summary>Why a cash refund cannot go back the way it came</summary>
+
+There is no payment to reverse. `POST /returns/:id/refund/manual` records a
+payment the shop already made over UPI, storing the reference in the same unique
+column as a Razorpay refund id, and refuses any order that has a
+`razorpayPaymentId` so nothing is refunded twice. A whole-order return refunds the
+collection fee along with delivery, on the same all-or-nothing rule.
+
+</details>
+
 ### GST
 
 Listed prices are the MRP: the tax is already inside them. Nothing here changes
@@ -461,38 +541,6 @@ Shiprocket's `recommended` one, which is chosen on rating and ran ₹57 over the
 cheapest on a median parcel. An admin picking a courier by hand on the order
 overrides that.
 
-### Cash on delivery
-
-On unless `COD_ENABLED` is the string `false`. It adds `COD_FEE` (49 by default)
-to the order and refuses any cart whose collectable amount, that fee included,
-would exceed `COD_MAX` (3000 by default). The cap is judged on the whole sum at
-risk at the door rather than the value of the goods, because a refused parcel
-costs both legs of shipping and returns stock that may not be sellable.
-
-Over the cap the quote does not fail: it prices as prepaid and returns
-`codError`, so a page keeps working and can explain itself. The fee is taxed at
-the principal supply's rate like delivery, so the rate-wise GST table still adds
-up to the total.
-
-A cash order differs from a prepaid one in four places, all of which used to test
-`paymentStatus === "PAID"`:
-
-- **Stock** is taken when the order is placed, not when money arrives, and the
-  coupon redemption is booked there too. Cancelling releases it.
-- **Dispatch** is allowed, and the label goes to Shiprocket with
-  `payment_method: COD` and a `transaction_charges` derived so the courier's own
-  arithmetic sums to what the customer was told to keep ready.
-- **Delivery is payment.** `applyOrderStatus` sets `paymentStatus: "PAID"` and
-  `paidAt` on delivery, because `paidAt` is what every revenue report reads.
-- **Abandoned-checkout sweeps skip them**, or one would nag a customer who owes
-  nothing yet and the other would cancel their order.
-
-Refunds cannot go back the way they came. `POST /returns/:id/refund/manual`
-records a payment the shop already made over UPI, storing the reference in the
-same unique column as a Razorpay refund id, and refuses any order that has a
-`razorpayPaymentId` so nothing is refunded twice. A whole-order return refunds
-the collection fee along with delivery.
-
 ### Shiprocket
 
 Shipping is optional. With no Shiprocket credentials set the store still takes
@@ -512,6 +560,10 @@ so you can launch before the courier account is approved.
 
 Auth tokens are cached for nine days and refreshed automatically on a 401, so
 normal traffic costs no extra login calls.
+
+A cash order is sent as `payment_method: COD` with `transaction_charges` derived
+from the collectable amount, so Shiprocket's own arithmetic lands on exactly the
+figure the customer was told to keep ready.
 
 #### Orders that move themselves
 
