@@ -135,6 +135,16 @@ model Product {
   breadthCm         Int      @default(12)
   heightCm          Int      @default(6)
   hsn               String?
+  /// The spec table under the product: `[{ label, value }]`, in the order the
+  /// shop typed them. JSON rather than a table because nothing queries it and
+  /// the catalogue list already carries two joins; a third, for rows only ever
+  /// read whole and only ever on one page, buys nothing.
+  specs             Json?
+  /// The long copy, as blocks: `[{ kind: "text" | "highlights" | "faq", ... }]`.
+  /// Same reasoning as specs. Validated on the way in by detailBlockSchema, so
+  /// what a page renders is a shape the API agreed to and not whatever was in
+  /// the column.
+  details           Json?
   /// GST percent. Price is the MRP, so this says how much tax is already inside it.
   gstRate           Decimal  @default(5) @db.Decimal(5, 2)
   /// What this costs to buy in, net of GST, since input tax credit means the
@@ -152,39 +162,90 @@ model Product {
   coupons    CouponProduct[]
   stockMoves StockMove[]
   variants   ProductVariant[]
+  colours    ProductColour[]
 }
 
-/// One size, or one colour, of a product.
+/// One colour a product comes in.
 ///
-/// Optional by design: a frying pan has no sizes and must keep working exactly as
+/// Its own row rather than a column on the variant because a colour carries
+/// photos, and a red shirt in five sizes is one set of photos, not five copies of
+/// it. Storing them on the variant would mean uploading the same image five times
+/// and hoping nobody edits one of them.
+///
+/// Optional like sizes: a product with no colours sells exactly as it did.
+model ProductColour {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// What the customer reads on the swatch: "Midnight blue".
+  name      String
+  /// What the swatch is painted, as `#rrggbb`. Null falls back to a neutral chip
+  /// with the name in it, because a colour nobody can name in hex is still a
+  /// colour worth selling.
+  hex       String?
+  /// This colour's own photos. Empty falls back to the product's, so a shop that
+  /// only has one set of pictures is not forced to upload them per colour.
+  images    String[] @default([])
+  /// Order in the swatch row, because a palette is not alphabetical.
+  position  Int      @default(0)
+  /// Off keeps the history and stops the sales, exactly as on a size.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  variants ProductVariant[]
+
+  @@unique([productId, name])
+  @@index([productId])
+}
+
+/// One buyable cell of a product: a colour, a size, or the pairing of the two.
+///
+/// Optional by design: a frying pan has neither and must keep working exactly as
 /// it did, so a product with no variants sells from Product.stock as before. Where
 /// variants exist they own the stock instead, and Product.stock is kept as their
 /// sum so the catalogue badge, the sorting and the reorder digest need no special
 /// case.
 ///
-/// Price stays on the product. A size that costs more is a different decision from
-/// a size that exists, and putting money here would mean every quote had to work
-/// out which row to believe.
+/// Both axes are optional independently, so all four shapes are one model:
+/// sizes only (colourId null), colours only (label ""), the full matrix, and
+/// neither. A shelf is a shelf whichever of the two named it.
 model ProductVariant {
-  id        String   @id @default(uuid())
+  id        String         @id @default(uuid())
   productId String
-  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
-  /// What the customer picks: "M", "38", "Free size".
+  product   Product        @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Which colour this cell belongs to. Null on a product sold in sizes only.
+  colourId  String?
+  colour    ProductColour? @relation(fields: [colourId], references: [id], onDelete: Cascade)
+  /// The size the customer picks: "M", "38". Empty string on a product sold by
+  /// colour alone, rather than null, so the pair below reads as one key and a
+  /// colour-only product cannot hold two nameless rows.
   label     String
+  /// What this cell costs, when it differs from the product. Null is the normal
+  /// case and means the product's own price: an XXL that costs more is a decision
+  /// the shop makes deliberately, and every quote resolves this the same way in
+  /// priceCart so nothing downstream has to guess which row holds the money.
+  price     Decimal?       @db.Decimal(10, 2)
   /// Order in the picker, because S/M/L/XL is not alphabetical.
-  position  Int      @default(0)
-  stock     Int      @default(0)
-  /// Off keeps the history and stops the sales. A size that is discontinued still
-  /// has to print on the orders that bought it.
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  position  Int            @default(0)
+  stock     Int            @default(0)
+  /// Off keeps the history and stops the sales. A combination that is
+  /// discontinued, or never existed, still has to print on the orders that
+  /// bought it.
+  isActive  Boolean        @default(true)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
 
   stockMoves StockMove[]
   orderItems OrderItem[]
 
-  @@unique([productId, label])
+  /// Binds on a product that has colours. It cannot bind when colourId is null,
+  /// because Postgres counts two nulls as different values, so the colourless
+  /// case is guarded in the variants handler instead — which compares labels
+  /// case-insensitively and so refuses "M" beside "m" as well.
+  @@unique([productId, colourId, label])
   @@index([productId])
+  @@index([colourId])
 }
 
 /// Why the number on the shelf changed.
@@ -416,6 +477,10 @@ model OrderItem {
   /// Snapshot of the size, for the same reason as gstRate below: a size that is
   /// renamed or withdrawn must not rewrite an invoice that has already gone out.
   variantLabel  String?
+  /// Snapshot of the colour, for the same reason. Kept apart from the label so a
+  /// picking list can print "Midnight blue · M" in its own columns rather than
+  /// unpicking one string.
+  variantColour String?
   quantity      Int
   price         Decimal         @db.Decimal(10, 2)
   /// Snapshot of the rate when the order was placed. Slabs change, and a
