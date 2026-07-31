@@ -56,6 +56,30 @@ const stockAdjustSchema = z.object({
   }),
   reason: z.enum(["RECEIVED", "CORRECTION", "DAMAGE"]),
   note: z.string().trim().max(200).optional(),
+  /** Which size received them. Required once a product has sizes. */
+  variantId: z.string().uuid().optional(),
+});
+
+/** Thrown inside the transaction so the whole adjustment rolls back with it. */
+class VariantRequiredError extends Error {}
+class UnknownVariantError extends Error {}
+
+const variantsSchema = z.object({
+  /**
+   * The whole set, in the order they should appear. Sent complete rather than one
+   * at a time because "S, M, L" is one decision, and a half-applied set would
+   * leave a product selling sizes nobody chose.
+   */
+  variants: z
+    .array(
+      z.object({
+        /** Absent creates it. Present must already belong to this product. */
+        id: z.string().uuid().optional(),
+        label: z.string().trim().min(1).max(24),
+        isActive: z.boolean().default(true),
+      })
+    )
+    .max(30),
 });
 
 const sortOptions = {
@@ -254,8 +278,21 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
 
   try {
     const product = await prisma.$transaction(async (tx) => {
+      // Which row holds this product's stock. Once it has sizes the total is only
+      // their sum, so an adjustment that does not name one has nowhere to land.
+      const sizes = await tx.productVariant.findMany({
+        where: { productId: id, isActive: true },
+        select: { id: true },
+      });
+
+      if (sizes.length > 0) {
+        if (!result.data.variantId) throw new VariantRequiredError();
+        if (!sizes.some((size) => size.id === result.data.variantId)) throw new UnknownVariantError();
+      }
+
       const balance = await moveStock(tx, {
         productId: id,
+        variantId: sizes.length > 0 ? result.data.variantId : null,
         delta: result.data.delta,
         reason: result.data.reason,
         note: result.data.note,
@@ -266,7 +303,10 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
 
       const updated = await tx.product.findUnique({
         where: { id },
-        include: { category: { select: { id: true, name: true, slug: true } } },
+        include: {
+          category: { select: { id: true, name: true, slug: true } },
+          variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+        },
       });
 
       return { updated, balance };
@@ -277,8 +317,20 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
       return;
     }
 
-    res.json({ product: serializeProduct(product.updated, { includeCost: true }) });
+    res.json({
+      product: serializeProduct(product.updated, { includeCost: true, includeHidden: true }),
+    });
   } catch (error) {
+    if (error instanceof VariantRequiredError) {
+      res.status(400).json({ error: "This product comes in sizes, so say which size this is for." });
+      return;
+    }
+
+    if (error instanceof UnknownVariantError) {
+      res.status(400).json({ error: "That size does not belong to this product." });
+      return;
+    }
+
     if (error instanceof NotEnoughStockError) {
       res.status(409).json({ error: "There are not that many on the shelf to take away." });
       return;
@@ -287,6 +339,113 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
     handleWriteError(res, error, {
       missing: "Product not found",
       fallback: "Could not adjust the stock",
+    });
+  }
+});
+
+/**
+ * Sets the whole list of sizes a product comes in.
+ *
+ * Sent as one list rather than one size at a time, because "S, M, L" is a single
+ * decision and half of it applied is a product selling sizes nobody chose.
+ *
+ * A size that disappears from the list is switched off rather than deleted, as
+ * soon as it has any history: its stock ledger and the orders that name it have
+ * to survive. Only a size that never moved and never sold is actually removed,
+ * which is what makes correcting a typo possible.
+ */
+router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
+  const result = variantsSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: result.error.issues[0]?.message ?? "Invalid input" });
+    return;
+  }
+
+  const id = req.params.id as string;
+  const wanted = result.data.variants;
+
+  const labels = wanted.map((variant) => variant.label.toLowerCase());
+  if (new Set(labels).size !== labels.length) {
+    res.status(400).json({ error: "Two sizes cannot have the same name." });
+    return;
+  }
+
+  try {
+    const product = await prisma.$transaction(async (tx) => {
+      const existing = await tx.productVariant.findMany({ where: { productId: id } });
+      if (existing.length === 0 && wanted.length === 0) {
+        return tx.product.findUnique({
+          where: { id },
+          include: {
+            category: { select: { id: true, name: true, slug: true } },
+            variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+          },
+        });
+      }
+
+      const keptIds = new Set(wanted.map((variant) => variant.id).filter(Boolean) as string[]);
+
+      for (const gone of existing.filter((variant) => !keptIds.has(variant.id))) {
+        const [moves, sold] = await Promise.all([
+          tx.stockMove.count({ where: { variantId: gone.id } }),
+          tx.orderItem.count({ where: { variantId: gone.id } }),
+        ]);
+
+        if (moves === 0 && sold === 0) {
+          await tx.productVariant.delete({ where: { id: gone.id } });
+        } else {
+          await tx.productVariant.update({ where: { id: gone.id }, data: { isActive: false } });
+        }
+      }
+
+      for (const [position, variant] of wanted.entries()) {
+        if (variant.id) {
+          await tx.productVariant.update({
+            where: { id: variant.id },
+            data: { label: variant.label, isActive: variant.isActive, position },
+          });
+        } else {
+          await tx.productVariant.create({
+            data: { productId: id, label: variant.label, isActive: variant.isActive, position },
+          });
+        }
+      }
+
+      // The moment sizes exist they own the stock, and nobody can say how many of
+      // that shelf of 41 jackets were mediums. Rather than guess, the total is
+      // written down to zero through the ledger so the shop counts each size in.
+      const current = await tx.product.findUnique({ where: { id }, select: { stock: true } });
+      if (existing.length === 0 && wanted.length > 0 && (current?.stock ?? 0) !== 0) {
+        await moveStock(tx, {
+          productId: id,
+          delta: -(current?.stock ?? 0),
+          reason: "CORRECTION",
+          note: "Split into sizes: count each size in",
+          userId: req.user!.id,
+          allowNegative: true,
+        });
+      }
+
+      return tx.product.findUnique({
+        where: { id },
+        include: {
+          category: { select: { id: true, name: true, slug: true } },
+          variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+        },
+      });
+    });
+
+    if (!product) {
+      res.status(404).json({ error: "Product not found" });
+      return;
+    }
+
+    res.json({ product: serializeProduct(product, { includeCost: true, includeHidden: true }) });
+  } catch (error) {
+    handleWriteError(res, error, {
+      missing: "Product not found",
+      duplicate: "This product already has a size with that name",
+      fallback: "Could not save these sizes",
     });
   }
 });
