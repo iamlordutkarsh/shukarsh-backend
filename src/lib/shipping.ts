@@ -15,11 +15,16 @@ const rateCache = createTtlCache<ServiceabilityResult>(RATE_TTL_SECONDS);
 
 export interface CartLine {
   productId: string;
+  /** Which size, for a product that comes in sizes. */
+  variantId?: string | null;
   quantity: number;
 }
 
 export interface PricedLine {
   productId: string;
+  variantId: string | null;
+  /** Snapshotted onto the order, so a renamed size never rewrites an invoice. */
+  variantLabel: string | null;
   name: string;
   slug: string;
   quantity: number;
@@ -40,22 +45,30 @@ export interface PricedCart {
 }
 
 /**
- * One entry per product, quantities added up.
+ * One entry per product and size, quantities added up.
  *
  * The bag arrives as an array and /api/orders/create is public, so the same
- * product can turn up in it twice. Checked line by line, 5 and 5 both pass
+ * thing can turn up in it twice. Checked line by line, 5 and 5 both pass
  * against a stock of 8 and the order oversells by two. Nothing downstream
  * minds: tax and discounts are mapped by line position against the lines
  * priceCart returns, which are these.
+ *
+ * A medium and a large of the same shirt are two entries, not one, because they
+ * come off two different shelves.
  */
 export function collapseLines(items: CartLine[]): CartLine[] {
-  const quantities = new Map<string, number>();
+  const collapsed = new Map<string, CartLine>();
 
   for (const item of items) {
-    quantities.set(item.productId, (quantities.get(item.productId) ?? 0) + item.quantity);
+    const variantId = item.variantId ?? null;
+    const key = `${item.productId}::${variantId ?? ""}`;
+    const seen = collapsed.get(key);
+
+    if (seen) seen.quantity += item.quantity;
+    else collapsed.set(key, { productId: item.productId, variantId, quantity: item.quantity });
   }
 
-  return [...quantities].map(([productId, quantity]) => ({ productId, quantity }));
+  return [...collapsed.values()];
 }
 
 export interface PriceCartOptions {
@@ -94,6 +107,7 @@ export async function priceCart(
       lengthCm: true,
       breadthCm: true,
       heightCm: true,
+      variants: { select: { id: true, label: true, stock: true, isActive: true } },
     },
   });
 
@@ -106,12 +120,42 @@ export async function priceCart(
     if (!product) {
       throw Object.assign(new Error("A product in your bag is no longer available"), { statusCode: 400 });
     }
-    if (!options?.placed && product.stock < item.quantity) {
-      throw Object.assign(new Error(`Only ${product.stock} left of ${product.name}`), { statusCode: 409 });
+
+    /**
+     * Which shelf this line comes off. A product with sizes has no sellable total
+     * of its own, so a line that names no size cannot be priced: that is a bag
+     * saved before the sizes existed, and the customer has to pick one.
+     */
+    const sellable = product.variants.filter((variant) => variant.isActive);
+    let variant: { id: string; label: string; stock: number } | null = null;
+
+    if (sellable.length > 0) {
+      const chosen = product.variants.find((option) => option.id === item.variantId);
+
+      if (!chosen || !chosen.isActive) {
+        throw Object.assign(
+          new Error(
+            item.variantId
+              ? `That size of ${product.name} is no longer available`
+              : `Choose a size for ${product.name}`
+          ),
+          { statusCode: 400 }
+        );
+      }
+
+      variant = chosen;
+    }
+
+    const available = variant ? variant.stock : product.stock;
+    if (!options?.placed && available < item.quantity) {
+      const what = variant ? `${product.name} (${variant.label})` : product.name;
+      throw Object.assign(new Error(`Only ${available} left of ${what}`), { statusCode: 409 });
     }
 
     lines.push({
       productId: product.id,
+      variantId: variant?.id ?? null,
+      variantLabel: variant?.label ?? null,
       name: product.name,
       slug: product.slug,
       quantity: item.quantity,
