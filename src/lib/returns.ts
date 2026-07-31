@@ -159,6 +159,8 @@ export interface RefundBreakdown {
   itemsAmount: number;
   /** Delivery, refunded only when the whole order is going back. */
   shippingAmount: number;
+  /** The cash collection fee, on the same all-or-nothing rule as delivery. */
+  codAmount: number;
   total: number;
   lines: { orderItemId: string; quantity: number; amount: number }[];
 }
@@ -197,11 +199,15 @@ export function refundBreakdown(order: any, requested: RefundLine[]): RefundBrea
   });
 
   const shippingAmount = everythingBack ? round2(Number(order.shippingAmount ?? 0)) : 0;
+  // A customer who sends back everything should be left where they started, and
+  // the collection fee is as much a cost of the delivery as the delivery is.
+  const codAmount = everythingBack ? round2(Number(order.codFee ?? 0)) : 0;
 
   return {
     itemsAmount,
     shippingAmount,
-    total: round2(itemsAmount + shippingAmount),
+    codAmount,
+    total: round2(itemsAmount + shippingAmount + codAmount),
     lines,
   };
 }
