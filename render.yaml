@@ -47,3 +47,11 @@ services:
         sync: false
       - key: SHIPROCKET_WEBHOOK_TOKEN
         generateValue: true
+      # Cash on delivery is on unless COD_ENABLED is the string "false", which is
+      # the switch to reach for during a week nobody can chase parcels.
+      - key: COD_ENABLED
+        sync: false
+      - key: COD_FEE
+        sync: false
+      - key: COD_MAX
+        sync: false
