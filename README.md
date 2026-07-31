@@ -305,88 +305,113 @@ collection fee along with delivery, on the same all-or-nothing rule.
 
 ### GST
 
-Listed prices are the MRP: the tax is already inside them. Nothing here changes
-what a customer is charged, it decides how the tax already in the total gets
-reported on the order, the receipt and the invoice.
+> [!IMPORTANT]
+> Listed prices are the MRP: **the tax is already inside them**. Nothing here
+> changes what a customer is charged. It decides how the tax already in the total
+> is reported on the order, the receipt and the invoice.
 
-`SELLER_STATE` is what splits CGST+SGST (buyer in your state) from IGST (buyer
-anywhere else), so GST stays switched off until you set it. That is the right
-setting until you have a GSTIN, because charging GST without one is not legal.
+```mermaid
+flowchart LR
+    B["buyer's state"] --> Q{"same as SELLER_STATE?"}
+    Q -->|yes| I["CGST + SGST<br/>half each"]
+    Q -->|no| G["IGST<br/>whole rate"]
+    Q -->|"SELLER_STATE unset"| N["no tax reported"]
+```
 
-Each product carries its own `gstRate`, picked from the real slabs (0, 0.25, 3,
-5, 12, 18, 28). New products fall back to `GST_DEFAULT_RATE`. Delivery is part
-of a composite supply, so it is taxed at the rate of the highest-value item in
-the order unless you set `GST_ON_SHIPPING=false`.
+| | Rate used |
+| --- | --- |
+| A product | its own `gstRate`, from the real slabs: 0, 0.25, 3, 5, 12, 18, 28 |
+| A product with none set | `GST_DEFAULT_RATE` |
+| Delivery | the rate of the highest-value item, unless `GST_ON_SHIPPING=false` |
+| The COD fee | the same, because it rides on the principal supply |
 
-Every order stores its own tax breakdown and the rate that applied to each line
-at the time. Slabs change and customers move house, and neither should be able
-to rewrite an invoice that has already gone out. `placeOfSupply` is kept for the
-same reason: GSTR-1 is filed state-wise.
-
-`POST /api/orders/quote` prices a bag without writing anything down. The
-checkout page uses it so the GST it shows comes from the same code that charges
+`POST /api/orders/quote` prices a bag without writing anything down, and the
+checkout page uses it, so the GST a customer sees comes from the code that charges
 the card.
 
+<details>
+<summary>Why GST stays off until you set a state, and why old invoices never change</summary>
+
+`SELLER_STATE` is what splits CGST+SGST from IGST, so there is nothing sensible to
+report without it. That is also the right setting until you hold a GSTIN, because
+charging GST without one is not legal.
+
+Every order stores its own tax breakdown and the rate that applied to each line at
+the time. Slabs change and customers move house, and neither may rewrite an invoice
+that has already gone out. `placeOfSupply` is kept for the same reason: GSTR-1 is
+filed state-wise.
+
 Shiprocket is sent `tax: 0` on every line on purpose. Our `selling_price` is
-already inclusive, and Shiprocket adds `tax` on top when it prints an invoice,
-so any other value bills the customer's GST to them twice.
+already inclusive and Shiprocket adds `tax` on top when it prints an invoice, so
+any other value bills the customer's GST to them twice.
+
+</details>
 
 ### Coupons
 
-Managed under **Admin > Coupons**. Three kinds: a percent off (optionally
-capped), a flat amount off, or free shipping. Each code can carry a minimum
-spend, a total usage limit, a per-customer limit, a live window, and a
-first-order-only flag.
+Managed under **Admin > Coupons**. Three kinds: a percent off (optionally capped),
+a flat amount off, or free shipping. Each code can carry a minimum spend, a total
+usage limit, a per-customer limit, a live window, and a first-order-only flag.
 
-Leave a code's categories empty and it covers the whole catalogue. Attach
-categories or products and only those lines are discounted, so "25% off
-dresses" leaves the rest of the bag alone. The minimum spend is then measured
-against the covered lines rather than the whole bag, which is the reading a
-customer expects.
+| Behaviour | Rule |
+| --- | --- |
+| Scope | No categories or products attached means the whole catalogue. Attach some and only those lines are discounted |
+| Minimum spend | Measured against the covered lines, not the whole bag |
+| How it is split | In proportion to what each covered line is worth, before tax |
+| When a use is counted | At payment, not at checkout |
+| Per-customer limit | Counts unpaid checkouts as well as paid ones |
+| Overshoot | A busy limited code can exceed `usageLimit` by a use or two under concurrent checkouts |
+| Deleting a used code | Switches it off instead |
 
-A discount is split across the lines it covers in proportion to what each is
-worth. That is not cosmetic: GST is charged per line at that line's own rate, so
-which lines the money comes off changes what is owed. The discount is applied
+`POST /api/coupons/apply` checks a code against a real bag and is what the checkout
+calls. It runs the whole quote rather than reading the coupon on its own, so the
+figure it reports is the figure that will be charged.
+
+<details>
+<summary>Why the split matters, and why a use is counted at payment</summary>
+
+Splitting in proportion is not cosmetic: GST is charged per line at that line's own
+rate, so which lines the money comes off changes what is owed. The discount lands
 before tax is worked out, because GST is due on what the customer actually pays.
 
-Redemptions are booked when an order is confirmed, not when it is placed, so an
-abandoned checkout never eats into a code's total count. The count is incremented
-unconditionally at that point: by then the money has been taken, and refusing to
-record it would leave a discount charged but unaccounted for.
+Redemptions are booked when an order is confirmed so an abandoned checkout never
+eats into the total count, and the count is then incremented unconditionally: the
+money has been taken, and refusing to record it would leave a discount charged but
+unaccounted for. The per-customer limit has to count unpaid checkouts too, or five
+of them carrying a one-per-person code can all be paid afterwards.
 
-The per-customer limit counts orders that are still awaiting payment as well as
-recorded redemptions. Without that, five unpaid checkouts each carrying a
-one-per-person code can all be paid afterwards and the code has been used five
-times.
+`usageLimit` is checked when the code is applied and again before payment starts,
+which is everywhere it can still be honoured. Deleting a used code would cascade
+its redemptions away, and those are what evidence an order's discount.
 
-So that an abandoned checkout does not sit on the customer's one use forever, an
-unpaid order is cancelled after `ABANDONED_ORDER_HOURS` (24 by default) and a
-cancelled order lets go of its code. That sweep runs hourly in process and again
-on `POST /api/logistics/sync`, which is the clock a host that sleeps actually
-has. Only orders Razorpay never named a payment against are touched.
+</details>
 
-Halfway through that window, the same sweep sends one recovery email per order
-and never a second, recorded on `Order.recoveryEmailAt`. It is skipped for a
+#### Abandoned checkouts
+
+```mermaid
+flowchart LR
+    P["unpaid order"] -->|"half of ABANDONED_ORDER_HOURS"| E["one recovery email, ever"]
+    E -->|"the rest of the window"| C["cancelled, coupon released"]
+    P -->|"paid at any point"| D["nothing happens"]
+```
+
+The sweep runs hourly in process and again on `POST /api/logistics/sync`, which is
+the clock a host that sleeps actually has. It only touches orders Razorpay never
+named a payment against, and it skips cash orders entirely. The email is recorded
+on `Order.recoveryEmailAt` so there is never a second one, and it is skipped for a
 customer who has paid for anything since, because a card that fails once often
-succeeds on the retry and that customer has not forgotten anything.
+succeeds on the retry.
 
-The link in it carries an HMAC of the order id, so it works without signing in
-and cannot be made up from an order id alone. `GET /api/orders/:id/recover`
-returns nothing but the products and quantities, and only those still on sale.
-The bag lives in the customer's browser, so the link rebuilds it rather than
-reviving the old checkout: prices, stock, delivery and coupons are all worked out
-again at the till.
+<details>
+<summary>How a recovery link works without signing in</summary>
 
-`usageLimit` is enforced where it can still be honoured, when the code is applied
-and again before payment starts, so a busy limited code can overshoot its cap by
-a use or two under concurrent checkouts.
+The link carries an HMAC of the order id, so it cannot be made up from an order id
+alone. `GET /api/orders/:id/recover` returns nothing but the products and
+quantities, and only those still on sale. The bag lives in the customer's browser,
+so the link rebuilds it rather than reviving the old checkout: prices, stock,
+delivery and coupons are all worked out again at the till.
 
-Deleting a code that has been used switches it off instead. Redemptions are what
-evidences an order's discount, and deleting the coupon would cascade them away.
-
-`POST /api/coupons/apply` checks a code against a real bag and is what the
-checkout page calls. It runs the whole quote rather than reading the coupon on
-its own, so the figure it reports is the figure that will be charged.
+</details>
 
 ### Email
 
