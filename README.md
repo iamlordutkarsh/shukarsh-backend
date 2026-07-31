@@ -463,6 +463,67 @@ and quietly rewrites the address to lowercase once its owner has proved it is th
 
 </details>
 
+### Colours and sizes
+
+A product may come in colours, in sizes, in both, or in neither. All four are the
+same two tables, and a product with no options sells from `Product.stock` exactly
+as it always did — nothing was backfilled, because splitting a shelf of 120
+t-shirts into sizes is a decision only the shop can make.
+
+| Table | Holds |
+| --- | --- |
+| `ProductColour` | The name, the hex for the swatch, and **the photos**. One row per colour. |
+| `ProductVariant` | One buyable cell: a `colourId`, a size `label`, its own stock, and an optional `price`. |
+
+Photos hang on the colour rather than the cell because a red shirt in five sizes
+is one set of pictures, not five copies of it. A colour with no photos of its own
+falls back to the product's.
+
+> [!IMPORTANT]
+> Once a product has cells, **they own the stock** and `Product.stock` is only
+> their sum. Selling a size against the product total would let the last medium go
+> to two people as long as there were enough larges in the building. The first time
+> a product is split, its total is written down to zero through the ledger so the
+> shop counts each cell in.
+
+Price stays on the product unless a cell overrides it. `priceCart` is the only
+place that resolves which of the two applies, so the quote, the order and the
+invoice cannot disagree; the API also returns `priceFrom` and `priceTo` so a card
+knows whether to say "from". Both the colour and the size are snapshotted onto
+`OrderItem`, because a colour that is later renamed must not rewrite an invoice
+that has already gone out.
+
+<details>
+<summary>Why the whole set is saved in one request</summary>
+
+`PUT /api/products/:id/variants` takes the colours and the cells together. "S, M,
+L in red and blue" is one decision, and half of it applied is a product selling
+combinations nobody chose. Sending them together also lets a cell name a colour
+the same payload is creating, which is what saves the admin screen a round trip.
+
+Anything that disappears from the set is switched **off** rather than deleted as
+soon as it has any history, so its ledger and the orders naming it survive. Only a
+cell that never moved and never sold is really removed, which is what makes
+correcting a typo possible.
+
+The unique index is `(productId, colourId, label)`. It cannot bind when `colourId`
+is null, because Postgres counts two nulls as different values, so the colourless
+case is guarded in the handler instead — which compares labels case-insensitively
+and so refuses "M" beside "m" as well.
+
+</details>
+
+### Product detail
+
+`Product.specs` and `Product.details` are validated JSON rather than tables of
+their own: nothing queries them, they are only ever read whole, and only ever on
+one page. `specs` is `[{ label, value }]` for the table under the product.
+`details` is the long copy as blocks — `text`, `highlights` or `faq` — checked
+against a discriminated union on the way in, and checked again on the way out, so
+a hand-edited row or a restored backup cannot reach a page as something it does
+not know how to draw. A malformed entry is dropped rather than thrown on: one bad
+spec is no reason to fail a whole product page.
+
 ### Stock
 
 Two numbers, one truth. `Product.stock` decides whether something can be sold,
