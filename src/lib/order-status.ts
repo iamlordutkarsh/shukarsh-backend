@@ -76,10 +76,16 @@ export async function applyOrderStatus(
     const current = await tx.order.findUnique({ where: { id: orderId }, include: { items: true } });
     if (!current) return null;
 
-    const paid = current.paymentStatus === "PAID";
+    /**
+     * Whether the units are currently spoken for, which is not the same question
+     * as whether the order is paid. A cash order takes stock the moment it is
+     * placed, because no payment is coming before dispatch, so keying this on
+     * payment would leave its units held forever after a cancellation.
+     */
+    const holdsStock = current.paymentStatus === "PAID" || current.paymentMethod === "COD";
     const closing = nextStatus === "CANCELLED" || nextStatus === "RETURNED";
-    const released = paid && closing && !current.stockReleased;
-    const reserved = paid && !closing && current.stockReleased;
+    const released = holdsStock && closing && !current.stockReleased;
+    const reserved = holdsStock && !closing && current.stockReleased;
     const shelfMoves = !options?.stockHandledElsewhere;
 
     for (const item of shelfMoves ? current.items : []) {
