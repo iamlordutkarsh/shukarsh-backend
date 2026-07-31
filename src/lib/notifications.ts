@@ -63,8 +63,10 @@ function totalsRows(order: {
   cgstTotal?: unknown;
   sgstTotal?: unknown;
   igstTotal?: unknown;
+  codFee?: unknown;
 }): string {
   const shipping = Number(order.shippingAmount ?? 0);
+  const codFee = Number(order.codFee ?? 0);
   const tax = Number(order.taxTotal ?? 0);
   const cgst = Number(order.cgstTotal ?? 0);
   const sgst = Number(order.sgstTotal ?? 0);
@@ -90,11 +92,20 @@ function totalsRows(order: {
           <td style="padding:4px 0;font-size:14px;text-align:right;color:#3fb98f">−${money(discount)}</td></tr>`
       : "";
 
+  // Itemised rather than folded into the total, because a customer counting out
+  // cash at the door should be able to see where every rupee came from.
+  const codRow =
+    codFee > 0
+      ? `<tr><td style="padding:4px 0;font-size:14px;color:#6b6480">Cash collection</td>
+          <td style="padding:4px 0;font-size:14px;text-align:right">${money(codFee)}</td></tr>`
+      : "";
+
   return `<tr><td style="padding:10px 0 0;font-size:14px;color:#6b6480;border-top:1px solid #eee8ff">Items</td>
       <td style="padding:10px 0 0;font-size:14px;text-align:right;border-top:1px solid #eee8ff">${money(order.itemsTotal)}</td></tr>
     ${discountRow}
     <tr><td style="padding:4px 0;font-size:14px;color:#6b6480">Shipping</td>
       <td style="padding:4px 0;font-size:14px;text-align:right">${shipping > 0 ? money(shipping) : "Free"}</td></tr>
+    ${codRow}
     <tr><td style="padding:10px 0 0;font-size:16px;font-weight:700;border-top:1px solid #eee8ff">Total</td>
       <td style="padding:10px 0 0;font-size:16px;text-align:right;font-weight:700;border-top:1px solid #eee8ff">${money(
         order.totalAmount
@@ -326,9 +337,15 @@ export async function sendOrderConfirmation(orderId: string): Promise<void> {
       subject: `Order ${reference(order.id)} confirmed`,
       html: layout(
         "Thank you, your order is confirmed",
-        `We have your payment and are getting order <strong>${reference(
-          order.id
-        )}</strong> ready. You will hear from us again the moment it ships.`,
+        // A cash order has no payment yet, and telling someone we have their
+        // money when we do not is the one line in this email that must be right.
+        order.paymentMethod === "COD"
+          ? `We are getting order <strong>${reference(order.id)}</strong> ready. Please keep
+             <strong>${money(order.totalAmount)}</strong> in cash ready for the courier, who
+             often cannot give change. You will hear from us again the moment it ships.`
+          : `We have your payment and are getting order <strong>${reference(
+              order.id
+            )}</strong> ready. You will hear from us again the moment it ships.`,
         `<table style="width:100%;border-collapse:collapse">
            ${itemRows(order.items)}
            ${totalsRows(order)}
