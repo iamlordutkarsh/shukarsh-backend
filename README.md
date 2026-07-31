@@ -363,6 +363,38 @@ Shiprocket's `recommended` one, which is chosen on rating and ran ₹57 over the
 cheapest on a median parcel. An admin picking a courier by hand on the order
 overrides that.
 
+### Cash on delivery
+
+On unless `COD_ENABLED` is the string `false`. It adds `COD_FEE` (49 by default)
+to the order and refuses any cart whose collectable amount, that fee included,
+would exceed `COD_MAX` (3000 by default). The cap is judged on the whole sum at
+risk at the door rather than the value of the goods, because a refused parcel
+costs both legs of shipping and returns stock that may not be sellable.
+
+Over the cap the quote does not fail: it prices as prepaid and returns
+`codError`, so a page keeps working and can explain itself. The fee is taxed at
+the principal supply's rate like delivery, so the rate-wise GST table still adds
+up to the total.
+
+A cash order differs from a prepaid one in four places, all of which used to test
+`paymentStatus === "PAID"`:
+
+- **Stock** is taken when the order is placed, not when money arrives, and the
+  coupon redemption is booked there too. Cancelling releases it.
+- **Dispatch** is allowed, and the label goes to Shiprocket with
+  `payment_method: COD` and a `transaction_charges` derived so the courier's own
+  arithmetic sums to what the customer was told to keep ready.
+- **Delivery is payment.** `applyOrderStatus` sets `paymentStatus: "PAID"` and
+  `paidAt` on delivery, because `paidAt` is what every revenue report reads.
+- **Abandoned-checkout sweeps skip them**, or one would nag a customer who owes
+  nothing yet and the other would cancel their order.
+
+Refunds cannot go back the way they came. `POST /returns/:id/refund/manual`
+records a payment the shop already made over UPI, storing the reference in the
+same unique column as a Razorpay refund id, and refuses any order that has a
+`razorpayPaymentId` so nothing is refunded twice. A whole-order return refunds
+the collection fee along with delivery.
+
 ### Shiprocket
 
 Shipping is optional. With no Shiprocket credentials set the store still takes
