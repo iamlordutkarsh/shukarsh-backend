@@ -1,16 +1,38 @@
 # Shukarsh Backend
 
-Backend API for the Shukarsh e-commerce store.
+The API behind the Shukarsh store: catalogue, checkout, payments, courier
+booking, returns and reviews. Express and TypeScript, Prisma over Postgres.
 
-## Tech Stack
+```mermaid
+flowchart LR
+    S["Storefront<br/>Next.js on Vercel"] -->|REST| A["This API<br/>Express on Render"]
+    A --> D[("Postgres<br/>Supabase")]
+    A --> R["Razorpay<br/>payments, refunds"]
+    A --> C["Shiprocket<br/>rates, labels, tracking"]
+    A --> E["Resend<br/>email"]
+    A --> F["Supabase Storage<br/>product and return photos"]
+    R -. "payment.captured" .-> A
+    C -. "courier scans" .-> A
+```
 
-- Node.js
-- Express
-- TypeScript
-- Prisma ORM
-- PostgreSQL (Supabase)
-- Razorpay
-- Shiprocket
+The dotted arrows arrive on their own, and they are why the shop still works when
+a customer closes the tab mid-payment or a parcel is delivered at 6am on a Sunday.
+Everything except Postgres is optional: with no Razorpay, Shiprocket, Resend or
+Supabase keys the store still runs, and each feature switches itself off rather
+than erroring.
+
+### Where to look
+
+| If you want to | Go to |
+| --- | --- |
+| Run it on your machine | [Getting started](#getting-started) |
+| Know what a setting does | [Settings](#settings) |
+| Deploy it, or change the database | [Deployment](#deployment) · [Schema changes](#schema-changes) |
+| Understand what happens after "Pay" | [An order's life](#an-orders-life) |
+| Charge tax, or run a discount | [GST](#gst) · [Coupons](#coupons) |
+| Send something back | [Returns](#returns) |
+| Count what is on the shelf | [Stock](#stock) |
+| Get a parcel to a customer | [What delivery costs](#what-delivery-costs-the-customer) · [Shiprocket](#shiprocket) |
 
 ## Getting Started
 
