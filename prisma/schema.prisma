@@ -151,6 +151,40 @@ model Product {
   wishlisted WishlistItem[]
   coupons    CouponProduct[]
   stockMoves StockMove[]
+  variants   ProductVariant[]
+}
+
+/// One size, or one colour, of a product.
+///
+/// Optional by design: a frying pan has no sizes and must keep working exactly as
+/// it did, so a product with no variants sells from Product.stock as before. Where
+/// variants exist they own the stock instead, and Product.stock is kept as their
+/// sum so the catalogue badge, the sorting and the reorder digest need no special
+/// case.
+///
+/// Price stays on the product. A size that costs more is a different decision from
+/// a size that exists, and putting money here would mean every quote had to work
+/// out which row to believe.
+model ProductVariant {
+  id        String   @id @default(uuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// What the customer picks: "M", "38", "Free size".
+  label     String
+  /// Order in the picker, because S/M/L/XL is not alphabetical.
+  position  Int      @default(0)
+  stock     Int      @default(0)
+  /// Off keeps the history and stops the sales. A size that is discontinued still
+  /// has to print on the orders that bought it.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  stockMoves StockMove[]
+  orderItems OrderItem[]
+
+  @@unique([productId, label])
+  @@index([productId])
 }
 
 /// Why the number on the shelf changed.
@@ -183,6 +217,10 @@ model StockMove {
   id        String          @id @default(uuid())
   productId String
   product   Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  /// Which size moved, when the product has sizes. Null is a product that has
+  /// none, so the ledger reads the same for both.
+  variantId String?
+  variant   ProductVariant? @relation(fields: [variantId], references: [id], onDelete: Cascade)
   /// Signed. Positive puts units on the shelf, negative takes them off.
   delta     Int
   /// What the shelf held once this had been applied, so history reads without
@@ -201,6 +239,7 @@ model StockMove {
 
   @@index([productId, createdAt])
   @@index([createdAt])
+  @@index([variantId])
 }
 
 /// Small key/value bookkeeping the shop needs and nothing else owns.
@@ -367,24 +406,31 @@ model Shipment {
 }
 
 model OrderItem {
-  id            String       @id @default(uuid())
+  id            String          @id @default(uuid())
   orderId       String
-  order         Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  order         Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
   productId     String
-  product       Product      @relation(fields: [productId], references: [id])
+  product       Product         @relation(fields: [productId], references: [id])
+  variantId     String?
+  variant       ProductVariant? @relation(fields: [variantId], references: [id])
+  /// Snapshot of the size, for the same reason as gstRate below: a size that is
+  /// renamed or withdrawn must not rewrite an invoice that has already gone out.
+  variantLabel  String?
   quantity      Int
-  price         Decimal      @db.Decimal(10, 2)
+  price         Decimal         @db.Decimal(10, 2)
   /// Snapshot of the rate when the order was placed. Slabs change, and a
   /// reissued invoice has to match the one the customer already has.
-  gstRate       Decimal      @default(0) @db.Decimal(5, 2)
-  taxableAmount Decimal      @default(0) @db.Decimal(10, 2)
-  taxAmount     Decimal      @default(0) @db.Decimal(10, 2)
+  gstRate       Decimal         @default(0) @db.Decimal(5, 2)
+  taxableAmount Decimal         @default(0) @db.Decimal(10, 2)
+  taxAmount     Decimal         @default(0) @db.Decimal(10, 2)
   /// What the goods cost us at the time of sale. Snapshotted for the same
   /// reason as the rate: renegotiating with a supplier must not quietly
   /// rewrite the profit on orders that already shipped.
-  costPrice     Decimal?     @db.Decimal(10, 2)
+  costPrice     Decimal?        @db.Decimal(10, 2)
   returnItems   ReturnItem[]
-  createdAt     DateTime     @default(now())
+  createdAt     DateTime        @default(now())
+
+  @@index([variantId])
 }
 
 model Coupon {
