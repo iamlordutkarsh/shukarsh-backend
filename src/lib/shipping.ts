@@ -39,6 +39,8 @@ export interface PricedLine {
   variantId: string | null;
   /** Snapshotted onto the order, so a renamed size never rewrites an invoice. */
   variantLabel: string | null;
+  /** The same, for the colour. Null on a product sold in sizes only. */
+  variantColour: string | null;
   name: string;
   slug: string;
   quantity: number;
@@ -85,6 +87,20 @@ export function collapseLines(items: CartLine[]): CartLine[] {
   return [...collapsed.values()];
 }
 
+/**
+ * What to call a cell when telling a customer about it: "Midnight blue · M".
+ *
+ * Either axis may be missing, so the separator is only written when there are
+ * two things to separate. Null for a product with no options at all, which reads
+ * as "just use the product's name".
+ */
+export function variantName(
+  variant: { label?: string | null; colour?: { name: string } | null } | null
+): string | null {
+  if (!variant) return null;
+  return [variant.colour?.name, variant.label].filter(Boolean).join(" · ") || null;
+}
+
 export interface PriceCartOptions {
   /**
    * Set for a bag that has already been bought.
@@ -121,7 +137,16 @@ export async function priceCart(
       lengthCm: true,
       breadthCm: true,
       heightCm: true,
-      variants: { select: { id: true, label: true, stock: true, isActive: true } },
+      variants: {
+        select: {
+          id: true,
+          label: true,
+          stock: true,
+          isActive: true,
+          price: true,
+          colour: { select: { name: true, isActive: true } },
+        },
+      },
     },
   });
 
@@ -136,49 +161,78 @@ export async function priceCart(
     }
 
     /**
-     * Which shelf this line comes off. A product with sizes has no sellable total
-     * of its own, so a line that names no size cannot be priced: that is a bag
-     * saved before the sizes existed, and the customer has to pick one.
+     * Which shelf this line comes off. A product with options has no sellable
+     * total of its own, so a line that names none cannot be priced: that is a bag
+     * saved before the options existed, and the customer has to pick one.
+     *
+     * A cell whose colour has been switched off is unsellable even when the cell
+     * itself still says active, because switching a colour off is how a shop
+     * withdraws every size of it at once.
      */
-    const sellable = product.variants.filter((variant) => variant.isActive);
-    let variant: { id: string; label: string; stock: number } | null = null;
+    const sellable = product.variants.filter(
+      (variant) => variant.isActive && variant.colour?.isActive !== false
+    );
 
-    if (sellable.length > 0) {
-      const chosen = product.variants.find((option) => option.id === item.variantId);
+    /**
+     * A placed order names a cell that may have been withdrawn since. It was
+     * sellable when it was bought and re-pricing it is not a fresh sale, so the
+     * withdrawn ones stay choosable here — otherwise retiring a colour would make
+     * every order that ever bought it impossible to ship.
+     */
+    const choosable = options?.placed ? product.variants : sellable;
+    let variant: (typeof product.variants)[number] | null = null;
 
-      if (!chosen || !chosen.isActive) {
+    if (choosable.length > 0) {
+      const chosen = choosable.find((option) => option.id === item.variantId);
+
+      if (!chosen) {
         throw Object.assign(
           new Error(
             item.variantId
-              ? `That size of ${product.name} is no longer available`
-              : `Choose a size for ${product.name}`
+              ? `That option of ${product.name} is no longer available`
+              : `Choose an option for ${product.name}`
           ),
           { statusCode: 400 }
         );
       }
 
       variant = chosen;
+    } else if (product.variants.length > 0) {
+      // Every option withdrawn. The product total is the sum of shelves nobody
+      // may sell from, so it cannot quietly stand in for one of them.
+      throw Object.assign(new Error(`${product.name} is no longer available`), { statusCode: 400 });
     }
+
+    /**
+     * The line's price. A cell may cost more than the product it belongs to, and
+     * this is the only place that resolves which of the two applies: the quote,
+     * the order and the invoice all price through here, so an XXL that costs
+     * extra cannot be charged one amount on the checkout page and another on the
+     * card statement.
+     */
+    const unitPrice = variant?.price != null ? Number(variant.price) : Number(product.price);
+    const chosenName = variantName(variant);
 
     const available = variant ? variant.stock : product.stock;
     if (!options?.placed && available < item.quantity) {
-      const what = variant ? `${product.name} (${variant.label})` : product.name;
+      const what = chosenName ? `${product.name} (${chosenName})` : product.name;
       throw Object.assign(new Error(`Only ${available} left of ${what}`), { statusCode: 409 });
     }
 
     lines.push({
       productId: product.id,
       variantId: variant?.id ?? null,
-      variantLabel: variant?.label ?? null,
+      variantLabel: variant?.label || null,
+      variantColour: variant?.colour?.name ?? null,
       name: product.name,
       slug: product.slug,
       quantity: item.quantity,
-      price: Number(product.price),
+      price: unitPrice,
       hsn: product.hsn,
       gstRate: Number(product.gstRate),
       categoryId: product.categoryId,
       costPrice: product.costPrice != null ? Number(product.costPrice) : null,
-      gross: round2(Number(product.price) * item.quantity),
+      gross: round2(unitPrice * item.quantity),
     });
 
     parcelItems.push({
