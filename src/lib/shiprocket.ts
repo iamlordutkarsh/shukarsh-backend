@@ -236,6 +236,12 @@ export interface CreateOrderPayload {
   items: { name: string; sku: string; units: number; sellingPrice: number; hsn?: string }[];
   subTotal: number;
   shippingCharges: number;
+  /**
+   * What the courier must collect at the door, or zero on a prepaid order.
+   * Shiprocket decides that from payment_method plus sub_total, so a COD order
+   * sent as Prepaid is delivered with nobody asking for the money.
+   */
+  collectable?: number;
   weightKg: number;
   lengthCm: number;
   breadthCm: number;
@@ -250,6 +256,10 @@ export interface CreateOrderResult {
 }
 
 export async function createAdhocOrder(payload: CreateOrderPayload): Promise<CreateOrderResult> {
+  const collectable = Math.max(0, Math.round(payload.collectable ?? 0));
+  const subTotal = Math.round(payload.subTotal);
+  const shippingCharges = Math.round(payload.shippingCharges);
+
   const body = {
     order_id: payload.reference,
     order_date: payload.orderDate,
@@ -278,11 +288,15 @@ export async function createAdhocOrder(payload: CreateOrderPayload): Promise<Cre
       tax: 0,
       ...(item.hsn ? { hsn: Number(item.hsn) } : {}),
     })),
-    payment_method: "Prepaid",
-    sub_total: Math.round(payload.subTotal),
-    shipping_charges: Math.round(payload.shippingCharges),
+    payment_method: collectable > 0 ? "COD" : "Prepaid",
+    sub_total: subTotal,
+    shipping_charges: shippingCharges,
     giftwrap_charges: 0,
-    transaction_charges: 0,
+    // Whatever is left of the amount to collect once goods and delivery are
+    // accounted for, which is the cash-collection fee. Derived rather than
+    // passed in, so the figures Shiprocket adds up come to exactly what the
+    // customer was told to keep ready, whatever we charged for what.
+    transaction_charges: collectable > 0 ? Math.max(0, collectable - subTotal - shippingCharges) : 0,
     // Callers pass subTotal already net of any coupon, so a discount here would
     // come off a second time.
     total_discount: 0,

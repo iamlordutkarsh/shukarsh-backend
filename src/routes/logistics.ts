@@ -374,11 +374,15 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
           hsn: item.product.hsn ?? undefined,
         })),
         // Net of any coupon, because sub_total is the one figure Shiprocket
-        // insures against and will collect at the door once COD exists. Sending
-        // it gross and the discount separately would put the courier's
-        // arithmetic between us and the cash.
+        // insures against and collects at the door. Sending it gross and the
+        // discount separately would put the courier's arithmetic between us and
+        // the cash.
         subTotal: Math.max(0, itemsTotal - discountTotal),
         shippingCharges: Number(order.shippingAmount ?? 0),
+        // The order total, fee included, and only on a cash order. Anything else
+        // here turns a prepaid parcel into one the customer is asked to pay for
+        // twice.
+        collectable: order.paymentMethod === "COD" ? Number(order.totalAmount) : 0,
         weightKg: cart.parcel.weightKg,
         lengthCm: cart.parcel.lengthCm,
         breadthCm: cart.parcel.breadthCm,
