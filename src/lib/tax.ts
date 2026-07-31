@@ -75,6 +75,7 @@ export interface TaxBreakdown {
   sgstTotal: number;
   igstTotal: number;
   shippingTax: number;
+  codTax: number;
   lines: TaxedLine[];
   buckets: RateBucket[];
 }
@@ -109,8 +110,16 @@ function taxInside(gross: number, rate: number): number {
 export function computeTax(params: {
   lines: TaxableLine[];
   shippingGross: number;
+  /**
+   * The cash-collection fee, which rides with delivery: both are ancillary to
+   * the goods, so both take the principal supply's rate. Left out of the buckets
+   * it would be charged to the customer but missing from the rate-wise table,
+   * and the invoice would not add up to what was paid.
+   */
+  codGross?: number;
   buyerState: string | null;
 }): TaxBreakdown {
+  const codGross = params.codGross ?? 0;
   const seller = sellerState();
   const buyer = params.buyerState ? canonicalState(params.buyerState) : null;
 
@@ -120,7 +129,8 @@ export function computeTax(params: {
   const intraState = seller !== null && buyer !== null ? buyer === seller : true;
 
   if (!isGstEnabled()) {
-    const gross = params.lines.reduce((total, line) => total + line.gross, 0) + params.shippingGross;
+    const gross =
+      params.lines.reduce((total, line) => total + line.gross, 0) + params.shippingGross + codGross;
 
     return {
       enabled: false,
@@ -132,6 +142,7 @@ export function computeTax(params: {
       sgstTotal: 0,
       igstTotal: 0,
       shippingTax: 0,
+      codTax: 0,
       // The rate is zeroed rather than carried through. These lines are what an
       // order stores, and "5% applicable, ₹0 collected" is indistinguishable
       // from a rounding bug when someone reconciles it later.
@@ -153,6 +164,7 @@ export function computeTax(params: {
   );
   const shippingRate = shippingIsTaxed() && principal ? principal.rate : 0;
   const shippingTax = taxInside(params.shippingGross, shippingRate);
+  const codTax = taxInside(codGross, shippingRate);
 
   const buckets = new Map<number, RateBucket>();
   const addToBucket = (rate: number, gross: number, tax: number) => {
@@ -165,6 +177,7 @@ export function computeTax(params: {
 
   for (const line of lines) addToBucket(line.rate, line.gross, line.tax);
   addToBucket(shippingRate, params.shippingGross, shippingTax);
+  addToBucket(shippingRate, codGross, codTax);
 
   let cgstTotal = 0;
   let sgstTotal = 0;
@@ -181,7 +194,8 @@ export function computeTax(params: {
   }
 
   const taxTotal = round2(cgstTotal + sgstTotal + igstTotal);
-  const grossTotal = params.lines.reduce((total, line) => total + line.gross, 0) + params.shippingGross;
+  const grossTotal =
+    params.lines.reduce((total, line) => total + line.gross, 0) + params.shippingGross + codGross;
 
   return {
     enabled: true,
@@ -193,6 +207,7 @@ export function computeTax(params: {
     sgstTotal,
     igstTotal,
     shippingTax,
+    codTax,
     lines,
     buckets: [...buckets.values()].sort((a, b) => a.rate - b.rate),
   };

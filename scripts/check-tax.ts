@@ -73,6 +73,37 @@ check(
 );
 check("one bucket per rate", mixed.buckets.map((b) => b.rate), [5, 18]);
 
+// The cash-collection fee is ancillary like delivery, so it follows the same
+// rate and has to land inside the buckets: charged but unbucketed, the rate-wise
+// table would not add up to what the customer paid.
+const withCod = computeTax({
+  lines: [
+    { productId: "a", gross: 2000, rate: 18 },
+    { productId: "b", gross: 500, rate: 5 },
+  ],
+  shippingGross: 100,
+  codGross: 49,
+  buyerState: "Delhi",
+});
+
+check("the COD fee is taxed at the principal rate", withCod.codTax, round2(49 - 49 / 1.18));
+check("the COD fee is inside the totals", round2(withCod.taxableTotal + withCod.taxTotal), 2649);
+check(
+  "the COD fee joins the shipping bucket, not a new one",
+  withCod.buckets.map((b) => b.rate),
+  [5, 18]
+);
+check(
+  "the buckets still sum to the money taken",
+  round2(withCod.buckets.reduce((total, b) => total + b.taxable + b.tax, 0)),
+  2649
+);
+check("an absent COD fee changes nothing", computeTax({
+  lines: [{ productId: "a", gross: 2000, rate: 18 }],
+  shippingGross: 100,
+  buyerState: "Delhi",
+}).codTax, 0);
+
 // A rate of zero must not produce tax or a divide-by-zero.
 const exempt = computeTax({
   lines: [{ productId: "a", gross: 750, rate: 0 }],
