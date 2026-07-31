@@ -276,9 +276,11 @@ router.post("/create", async (req, res) => {
             create: cart.lines.map((line, index) => ({
               productId: line.productId,
               variantId: line.variantId,
-              // The label as well as the link: a size that is later renamed or
-              // withdrawn must not change what this invoice says was bought.
+              // The names as well as the link: a colour or size that is later
+              // renamed or withdrawn must not change what this invoice says was
+              // bought.
               variantLabel: line.variantLabel,
+              variantColour: line.variantColour,
               quantity: line.quantity,
               price: line.price,
               // The rate tax was actually worked out at, not the product's, so a

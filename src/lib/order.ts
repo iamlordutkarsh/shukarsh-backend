@@ -84,9 +84,10 @@ export function serializeOrder(order: any, options?: { includeCost?: boolean }) 
       id: item.id,
       orderId: item.orderId,
       productId: item.productId,
-      // The snapshot, not the linked row: the size that was bought, even if that
-      // size has since been renamed or withdrawn.
+      // The snapshot, not the linked row: what was bought, even if that colour
+      // or size has since been renamed or withdrawn.
       variantLabel: item.variantLabel ?? null,
+      variantColour: item.variantColour ?? null,
       quantity: item.quantity,
       price: Number(item.price),
       gstRate: Number(item.gstRate ?? 0),
