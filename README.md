@@ -165,22 +165,6 @@ does not fail a request.
 
 ### Schema changes
 
-Migrations live in `prisma/migrations` and are committed. `prisma migrate deploy`
-runs from the `prestart` script, so it happens on the way up no matter how the
-host's build command is configured. That is deliberate: `render.yaml` also puts
-it in `buildCommand`, but a service set up by hand in the Render dashboard does
-not use the blueprint, and the schema silently not migrating is how you end up
-with new code live against an old database. Running it twice costs nothing,
-because applying an already-applied migration is a no-op.
-
-A failed migration therefore stops the server from starting. That is the point:
-refusing to boot is easier to spot and to fix than booting and throwing P2022 on
-every request that touches the changed table.
-
-Never use `prisma db push` against production: it changes the database without
-recording a migration, and the next deploy will not know what has already been
-applied.
-
 To change the schema, edit `prisma/schema.prisma`, then:
 
 ```bash
@@ -188,6 +172,27 @@ npx prisma migrate dev --name what_changed
 ```
 
 Commit the generated folder under `prisma/migrations` along with the schema.
+
+> [!CAUTION]
+> Never run `prisma db push` against production. It changes the database without
+> recording a migration, so the next deploy has no idea what has already been
+> applied.
+
+<details>
+<summary>Why migrations run at boot, and why a failed one takes the server down</summary>
+
+`prisma migrate deploy` runs from `prestart`, so it happens on the way up however
+the host's build command is configured. `render.yaml` also puts it in
+`buildCommand`, but a service created by hand in the Render dashboard does not use
+the blueprint, and the schema silently not migrating is how new code ends up live
+against an old database. Running it twice costs nothing: an applied migration is a
+no-op.
+
+So a failed migration stops the server from starting, which is the point. Refusing
+to boot is easier to spot and fix than booting and throwing P2022 on every request
+that touches the changed table.
+
+</details>
 
 ### Render
 
@@ -654,25 +659,27 @@ figure the customer was told to keep ready.
 
 #### Orders that move themselves
 
-Once a shipment has an AWB, courier scans drive the order status: Processing
-becomes Shipped on dispatch and Delivered on delivery, with no clicking.
+Once a shipment has an AWB, courier scans drive the order status with no clicking.
+Two things do it, and the second exists because the first is not reliable.
 
-Two things do it. The webhook above is the push, and a poller is the safety net
-for deliveries a webhook drops or that arrive while the service is asleep. An
-order only ever moves forward, and a cancellation or return recorded by an admin
-is never overwritten by a late scan.
+| Route | Good for | Cost |
+| --- | --- | --- |
+| Courier webhook | Instant, no polling | Silently drops updates, and cannot reach a sleeping service |
+| Poller | Catches whatever the webhook lost | One courier call per active shipment |
+| **Refresh tracking** button | An admin who wants to know now | Shares a cooldown, `TRACKING_SYNC_MIN_GAP_SEC` (300s) |
 
-Run the poller whichever way suits the host:
+Run the poller whichever way the host allows:
 
 - **Always-on host:** set `TRACKING_SYNC_INTERVAL_MIN` to something like `30`.
-- **Host that sleeps, or a separate scheduler:** set `CRON_SECRET` and have a
-  cron job `POST /api/logistics/sync` with an `x-cron-key` header.
+- **Host that sleeps, or a separate scheduler:** set `CRON_SECRET` and have a cron
+  job `POST /api/logistics/sync` with an `x-cron-key` header. This path ignores the
+  cooldown and always does the work.
 
-Admins can also press **Refresh tracking** on the orders page at any time. That
-button and the orders panel share a cooldown so repeated refreshes cost no
-courier calls: inside the window they answer "already up to date" instead.
-Set `TRACKING_SYNC_MIN_GAP_SEC` to change it from the default 300 seconds. The
-cron path ignores the cooldown and always does the work.
+> [!NOTE]
+> This repo runs on Render's free tier, where the service sleeps. In-process timers
+> do not fire while it is asleep, so the cron route is the only clock that works
+> there. Until one is set up, tracking only advances when somebody opens the admin
+> orders page.
 
 #### Logistics endpoints
 
