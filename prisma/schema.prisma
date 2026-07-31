@@ -28,6 +28,14 @@ enum PaymentStatus {
   REFUNDED
 }
 
+/// How the customer pays. COD money arrives with the courier days after
+/// dispatch, so paymentStatus stays PENDING on a perfectly good order and
+/// nothing may read PENDING as "abandoned" without checking this first.
+enum PaymentMethod {
+  PREPAID
+  COD
+}
+
 /// Why a parcel is coming back. Only faults on our side are accepted: nails and
 /// kitchen goods cannot be resold once opened, so change of mind is not offered.
 enum ReturnReason {
@@ -215,9 +223,13 @@ model Order {
   customerPhone     String?
   status            OrderStatus       @default(PENDING)
   paymentStatus     PaymentStatus     @default(PENDING)
+  paymentMethod     PaymentMethod     @default(PREPAID)
   itemsTotal        Decimal           @default(0) @db.Decimal(10, 2)
   shippingAmount    Decimal           @default(0) @db.Decimal(10, 2)
-  /// totalAmount is itemsTotal - discountTotal + shippingAmount.
+  /// What the courier charges to collect cash, passed on to the customer. Zero
+  /// on a prepaid order.
+  codFee            Decimal           @default(0) @db.Decimal(10, 2)
+  /// totalAmount is itemsTotal - discountTotal + shippingAmount + codFee.
   discountTotal     Decimal           @default(0) @db.Decimal(10, 2)
   couponId          String?
   coupon            Coupon?           @relation(fields: [couponId], references: [id])
