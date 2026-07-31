@@ -209,19 +209,28 @@ Commit the generated folder under `prisma/migrations` along with the schema.
 
 #### Payment webhook
 
-Set this up. The browser calls `/api/orders/verify` after a successful payment,
-but that call never happens if the customer closes the tab, loses signal or the
-page crashes in that moment. Razorpay would have taken the money while the order
-sat on `PENDING` with stock never decremented.
+> [!WARNING]
+> Set this up. The browser calls `/api/orders/verify` after a payment, but that call
+> never happens if the customer closes the tab or loses signal in that moment.
+> Razorpay would have taken the money while the order sat on `PENDING` with the stock
+> never decremented.
 
 1. Razorpay dashboard > **Settings > Webhooks > Add New Webhook**.
 2. URL: `https://your-api-host/api/orders/webhook`
 3. Secret: any long random string, also set as `RAZORPAY_WEBHOOK_SECRET`.
 4. Subscribe to **payment.captured**.
 
-Both paths converge on the same conditional update, so whichever arrives second
-sees the order already paid and skips the stock decrement rather than running it
-twice.
+```mermaid
+sequenceDiagram
+    participant B as Browser
+    participant A as API
+    participant R as Razorpay
+    B->>R: pays
+    R-->>B: success
+    B->>A: POST /orders/verify
+    R->>A: payment.captured (independently)
+    Note over A: both hit the same conditional update;<br/>the second sees it already paid and does nothing
+```
 
 ## How the shop works
 
@@ -425,22 +434,29 @@ shipment.
 ### Accounts
 
 One address is one account, however it was typed. Every route that takes an email
-parses it through `emailField`, which trims and lowercases before it validates,
-so what gets stored is what the next sign-in will search for. Sign-in used to
-compare addresses exactly, which made `Priya@gmail.com` and `priya@gmail.com` two
-people with their orders split between them.
+parses it through `emailField`, which trims and lowercases before validating, so
+what gets stored is what the next sign-in will search for.
 
-The migration lowercased every address that could be lowercased without landing
-on another row, and deliberately stopped at pairs that differ only by case, since
-merging two accounts means choosing whose orders and whose password survive.
-`npm run check:emails` lists any that are left, with order counts to show which
-one is the real one. Sign-in still reaches those rows by falling back to a
-case-insensitive lookup, oldest first, and quietly rewrites the address to
-lowercase once its owner has proved it is theirs.
+> [!NOTE]
+> There is still work owed here. Once `npm run check:emails` reports nothing, add a
+> unique index on `lower("email")` to make the rule structural. It is not there yet
+> because creating it fails while any duplicate exists, and a failed migration is a
+> failed deploy.
 
-Once `check:emails` reports nothing, a unique index on `lower("email")` should be
-added to make the rule structural. It is not there yet because creating it fails
-if any duplicate still exists, and a failed migration is a failed deploy.
+<details>
+<summary>What the migration did, and what it deliberately would not do</summary>
+
+Sign-in used to compare addresses exactly, which made `Priya@gmail.com` and
+`priya@gmail.com` two people with their orders split between them. The migration
+lowercased every address that could be lowercased without landing on another row,
+and stopped at pairs that differ only by case, because merging two accounts means
+choosing whose orders and whose password survive. That is a decision for a person.
+
+`check:emails` lists the ones left with order counts, to show which is the real one.
+Sign-in still reaches those rows through a case-insensitive fallback, oldest first,
+and quietly rewrites the address to lowercase once its owner has proved it is theirs.
+
+</details>
 
 ### Stock
 
@@ -574,17 +590,17 @@ The shop can hide a review, never delete it, and only with a reason:
 query, so they are out of both the public list and the average. Editing a hidden
 review does not put it back up.
 
-The reason is mandatory on purpose. Take down abuse, spam, and anything naming a
-third party; do not take down a fair complaint. Hiding poor ratings leaves an
-average that lies to shoppers, and it is also what disqualifies the shop from
-showing stars in Google results, which is the only reason the aggregate is
-published as structured data at all.
+> [!CAUTION]
+> Take down abuse, spam, and anything naming a third party. Do not take down a fair
+> complaint. Hiding poor ratings leaves an average that lies to shoppers, and it is
+> what disqualifies the shop from showing stars in Google results, which is the only
+> reason the aggregate is published as structured data at all. The reason field is
+> mandatory to make that a decision somebody has to write down.
 
 Shopper-facing product reads carry `rating: { count, average }`, averaged by the
-database over all visible reviews and rounded to one decimal. Admin writes
-(saving a product, adjusting stock) leave the field off entirely rather than
-sending a zero, since absent means "not counted here" and zero would read as
-"nobody likes this".
+database over visible reviews and rounded to one decimal. Admin writes leave the
+field off entirely rather than sending a zero, since absent means "not counted here"
+and zero would read as "nobody likes this".
 
 ### What delivery costs the customer
 
@@ -593,19 +609,24 @@ The shop's own policy, not the courier's rate: free at or above
 `SHIPPING_FLAT_FEE` (0 by default) below it. So delivery is free everywhere until
 a fee is configured.
 
-That separation is deliberate. A live courier rate has two customers paying
-different amounts for the same dress because one lives further away, it publishes
-what the shop pays to anyone with a pincode, and it makes the total depend on
-Shiprocket answering. Under this policy an outage costs a delivery estimate, not
-the fee. What the courier charges is still worth knowing before you move these
-numbers: `npm run rates:survey` quotes real rates across 33 pincodes and prints
-the median and p90 to set them from.
+Since the shop pays for delivery, it also books it: the cheapest courier promising
+delivery within `SHIPPING_MAX_ETD_DAYS` (7 by default). An admin picking a courier
+by hand on the order overrides that.
 
-Since the shop pays for delivery, it also books it. We take the cheapest courier
-promising delivery within `SHIPPING_MAX_ETD_DAYS` (7 by default) rather than
-Shiprocket's `recommended` one, which is chosen on rating and ran ₹57 over the
-cheapest on a median parcel. An admin picking a courier by hand on the order
-overrides that.
+<details>
+<summary>Why the customer never sees a courier rate, and where the numbers come from</summary>
+
+A live courier rate has two customers paying different amounts for the same dress
+because one lives further away, it publishes what the shop pays to anyone with a
+pincode, and it makes the total depend on Shiprocket answering. Under a flat policy
+an outage costs a delivery estimate, not the fee.
+
+What the courier actually charges is still worth knowing before moving these
+numbers: `npm run rates:survey` quotes real rates across 33 pincodes and prints the
+median and p90 to set them from. We do not take Shiprocket's `recommended` courier,
+which is chosen on rating and ran ₹57 over the cheapest on a median parcel.
+
+</details>
 
 ### Shiprocket
 
