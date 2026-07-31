@@ -27,10 +27,23 @@ export interface SerializedProduct {
    * nobody asked, and a hardcoded zero there would read as "nobody likes this".
    */
   rating?: RatingSummary;
+  /**
+   * The sizes, when a product has any. An empty array means it sells as one
+   * thing, which is the case for most of the catalogue, so a storefront can ask
+   * `variants.length > 0` rather than knowing which products are clothes.
+   */
+  variants: SerializedVariant[];
   categoryId: string;
   createdAt: Date;
   updatedAt: Date;
   category?: { id: string; name: string; slug: string };
+}
+
+export interface SerializedVariant {
+  id: string;
+  label: string;
+  stock: number;
+  position: number;
 }
 
 /**
@@ -44,7 +57,7 @@ export interface SerializedProduct {
  */
 export function serializeProduct(
   product: any,
-  options?: { includeCost?: boolean; rating?: RatingSummary }
+  options?: { includeCost?: boolean; includeHidden?: boolean; rating?: RatingSummary }
 ): SerializedProduct {
   const serialized: SerializedProduct = {
     id: product.id,
@@ -63,6 +76,18 @@ export function serializeProduct(
     heightCm: product.heightCm,
     hsn: product.hsn,
     gstRate: Number(product.gstRate ?? 0),
+    // A read that did not ask for them says "no sizes" rather than nothing, so a
+    // caller never has to tell a product without sizes apart from a query that
+    // forgot to include them. Withdrawn sizes are left out of every response but
+    // the admin one, which needs to see what it can switch back on.
+    variants: ((product.variants ?? []) as any[])
+      .filter((variant) => options?.includeHidden || variant.isActive)
+      .map((variant) => ({
+        id: variant.id,
+        label: variant.label,
+        stock: variant.stock,
+        position: variant.position,
+      })),
     categoryId: product.categoryId,
     createdAt: product.createdAt,
     updatedAt: product.updatedAt,
@@ -89,11 +114,12 @@ export function serializeProduct(
 
 export function serializeProducts(
   products: any[],
-  options?: { includeCost?: boolean; ratings?: Map<string, RatingSummary> }
+  options?: { includeCost?: boolean; includeHidden?: boolean; ratings?: Map<string, RatingSummary> }
 ): SerializedProduct[] {
   return products.map((product) =>
     serializeProduct(product, {
       includeCost: options?.includeCost,
+      includeHidden: options?.includeHidden,
       // Products nobody has reviewed are missing from the grouped result, so an
       // absent key is a real zero here rather than an unanswered question.
       rating: options?.ratings ? (options.ratings.get(product.id) ?? EMPTY_RATING) : undefined,

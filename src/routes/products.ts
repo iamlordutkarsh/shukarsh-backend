@@ -103,7 +103,10 @@ router.get("/", perCaller, async (req, res) => {
       skip: (page - 1) * limit,
       take: limit,
       orderBy,
-      include: { category: { select: { id: true, name: true, slug: true } } },
+      include: {
+        category: { select: { id: true, name: true, slug: true } },
+        variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+      },
     }),
     prisma.product.count({ where }),
   ]);
@@ -116,7 +119,11 @@ router.get("/", perCaller, async (req, res) => {
   res.json({
     // The admin catalogue reads this same endpoint, so cost comes back for an
     // admin and is dropped for everyone else.
-    products: serializeProducts(products, { includeCost: isAdminRequest(req), ratings }),
+    products: serializeProducts(products, {
+      includeCost: isAdminRequest(req),
+      includeHidden: isAdminRequest(req),
+      ratings,
+    }),
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
@@ -124,7 +131,10 @@ router.get("/", perCaller, async (req, res) => {
 router.get("/:slug", perCaller, async (req, res) => {
   const product = await prisma.product.findUnique({
     where: { slug: req.params.slug as string },
-    include: { category: { select: { id: true, name: true, slug: true } } },
+    include: {
+      category: { select: { id: true, name: true, slug: true } },
+      variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+    },
   });
 
   if (!product) {
@@ -134,7 +144,13 @@ router.get("/:slug", perCaller, async (req, res) => {
 
   const rating = await ratingSummary(product.id);
 
-  res.json({ product: serializeProduct(product, { includeCost: isAdminRequest(req), rating }) });
+  res.json({
+    product: serializeProduct(product, {
+      includeCost: isAdminRequest(req),
+      includeHidden: isAdminRequest(req),
+      rating,
+    }),
+  });
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {
