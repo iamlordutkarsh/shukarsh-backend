@@ -67,6 +67,93 @@ Everything else turns a feature on.
 > The three that need a database are diagnostics you run when something looks
 > wrong, not part of the build.
 
+## Settings
+
+Every setting is an environment variable, and every one has a working default
+except the two below. A feature whose keys are missing switches itself off; it
+does not fail a request.
+
+**Required**
+
+| Setting | What it does |
+| --- | --- |
+| `DATABASE_URL` | Postgres connection string, from Supabase |
+| `JWT_SECRET` | Signs sign-in tokens, and the recovery links in email |
+
+> [!WARNING]
+> `JWT_SECRET` has a hardcoded fallback so a fresh clone runs. Anyone who reads
+> this repo can mint an admin token against a server that never set it.
+
+**Payments**
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | unset | Online payments and refunds. Unset means cash on delivery only |
+| `RAZORPAY_WEBHOOK_SECRET` | unset | Verifies `payment.captured`. Without it the webhook is refused |
+| `COD_ENABLED` | on | Set to `false` to take cash off the checkout |
+| `COD_FEE` | `49` | Added to a cash order, and taxed like delivery |
+| `COD_MAX` | `3000` | Most the courier may collect, fee included |
+
+**Tax**
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `SELLER_STATE` | unset | Turns GST on, and decides CGST+SGST against IGST |
+| `SELLER_GSTIN` | unset | Printed on invoices |
+| `GST_DEFAULT_RATE` | `5` | Rate for a product that has none of its own |
+| `GST_ON_SHIPPING` | on | `false` leaves delivery untaxed |
+| `GST_ENABLED` | on | `false` overrides the above and reports no tax at all |
+
+**Delivery**
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `SHIPPING_FREE_ABOVE` | `299` | Order value, after coupons, at which delivery is free |
+| `SHIPPING_FLAT_FEE` | `0` | Charged below that. `0` means delivery is always free |
+| `SHIPPING_MAX_ETD_DAYS` | `7` | Slowest courier we will book |
+| `SHIPROCKET_EMAIL`, `SHIPROCKET_PASSWORD` | unset | API user, not your dashboard login |
+| `SHIPROCKET_PICKUP_LOCATION` | unset | Pickup nickname, matched exactly |
+| `SHIPROCKET_PICKUP_PINCODE` | unset | Where parcels are collected from |
+| `SHIPROCKET_CHANNEL_ID` | unset | Which Shiprocket channel orders land in |
+| `SHIPROCKET_WEBHOOK_TOKEN` | unset | Shared secret for courier status pushes |
+| `TRACKING_SYNC_INTERVAL_MIN` | off | In-process poller, for an always-on host |
+| `TRACKING_SYNC_MIN_GAP_SEC` | `300` | Cooldown on manual tracking refreshes |
+| `CRON_SECRET` | unset | Lets an outside scheduler `POST /api/logistics/sync` |
+
+**Everything else**
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `RESEND_API_KEY`, `EMAIL_FROM` | unset | Email. Both needed, or nothing is sent |
+| `EMAIL_REPLY_TO` | `EMAIL_FROM` | Where replies go |
+| `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | unset | Image uploads |
+| `SUPABASE_BUCKET` | `product-images` | Bucket for product and return photos |
+| `FRONTEND_URL` | `https://shukarsh.com` | Used to build links inside emails |
+| `CORS_ORIGIN` | `http://localhost:3000` | Who may call this API from a browser |
+| `PORT` | `5000` | Listen port |
+| `ABANDONED_ORDER_HOURS` | `24` | Unpaid checkout is cancelled after this |
+| `RETURN_WINDOW_DAYS` | `7` | How long after delivery a return can be opened |
+| `LOW_STOCK_DIGEST_HOUR` | `9` | Hour, IST, for the reorder email |
+| `RATE_LIMIT_LOGIN_MAX` | `10` | Per IP, per window |
+| `RATE_LIMIT_REGISTER_MAX` | `5` | |
+| `RATE_LIMIT_QUOTE_MAX` | `300` | |
+| `RATE_LIMIT_COUPON_MAX` | `20` | |
+| `RATE_LIMIT_REVIEW_MAX` | `30` | |
+| `RATE_LIMIT_UPLOAD_MAX` | `30` | |
+| `RATE_LIMIT_RECOVERY_MAX` | `20` | |
+
+<details>
+<summary>Timeouts and base URLs, only worth touching to point at a mock</summary>
+
+`RAZORPAY_API_BASE_URL` (`https://api.razorpay.com`),
+`RAZORPAY_REQUEST_TIMEOUT_MS` (`20000`),
+`SHIPROCKET_API_BASE_URL` (`https://apiv2.shiprocket.in`),
+`SHIPROCKET_REQUEST_TIMEOUT_MS` (`15000`),
+`SHIPROCKET_RATE_CACHE_TTL_SEC` (`900`),
+`EMAIL_REQUEST_TIMEOUT_MS` (`10000`).
+
+</details>
+
 ## Deployment
 
 ### Supabase Database
@@ -109,13 +196,9 @@ Commit the generated folder under `prisma/migrations` along with the schema.
 3. Use the `render.yaml` blueprint or configure manually:
    - Build command: `npm install; npm run build`
    - Start command: `npm run start`
-4. Add environment variables:
-   - `DATABASE_URL` (from Supabase)
-   - `JWT_SECRET` (random string)
-   - `RAZORPAY_KEY_ID` (from Razorpay)
-   - `RAZORPAY_KEY_SECRET` (from Razorpay)
-   - `FRONTEND_URL` (your Vercel frontend URL)
-   - `CORS_ORIGIN` (your Vercel frontend URL)
+4. Set the environment variables from [Settings](#settings). To be selling, that
+   means `DATABASE_URL`, `JWT_SECRET`, the two Razorpay keys, and `FRONTEND_URL`
+   and `CORS_ORIGIN` pointing at your Vercel domain.
 
 ### Razorpay
 
