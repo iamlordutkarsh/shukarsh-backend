@@ -39,20 +39,26 @@ function layout(heading: string, intro: string, body: string): string {
 </body></html>`;
 }
 
+/** What a line was bought as, once both snapshots are read: "Midnight blue · M". */
+type NamedLine = {
+  variantLabel?: string | null;
+  variantColour?: string | null;
+  product: { name: string };
+};
+
 /**
- * What a customer needs to read to know this is the right thing: the size as
- * well as the name, so an email about a large is not identical to one about a
- * medium. Reads the snapshot on the line rather than the size itself, which may
- * have been renamed since.
+ * What a customer needs to read to know this is the right thing: the colour and
+ * size as well as the name, so an email about a large is not identical to one
+ * about a medium. Reads the snapshots on the line rather than the rows they came
+ * from, which may have been renamed since.
  */
-function lineName(line: { variantLabel?: string | null; product: { name: string } }): string {
+function lineName(line: NamedLine): string {
   const name = escapeHtml(line.product.name);
-  return line.variantLabel ? `${name} <span style="color:#6f6a80">· ${escapeHtml(line.variantLabel)}</span>` : name;
+  const chosen = [line.variantColour, line.variantLabel].filter(Boolean).join(" · ");
+  return chosen ? `${name} <span style="color:#6f6a80">· ${escapeHtml(chosen)}</span>` : name;
 }
 
-function itemRows(
-  items: { quantity: number; price: unknown; variantLabel?: string | null; product: { name: string } }[]
-): string {
+function itemRows(items: ({ quantity: number; price: unknown } & NamedLine)[]): string {
   return items
     .map(
       (item) => `<tr>
@@ -166,9 +172,7 @@ const OUTCOME_LABEL: Record<string, string> = {
   EXCHANGE: "a replacement",
 };
 
-function returnRows(
-  items: { quantity: number; orderItem: { variantLabel?: string | null; product: { name: string } } }[]
-): string {
+function returnRows(items: { quantity: number; orderItem: NamedLine }[]): string {
   return items
     .map(
       (item) => `<tr><td style="padding:8px 0;font-size:14px">${lineName(
