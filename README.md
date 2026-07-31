@@ -419,30 +419,59 @@ if any duplicate still exists, and a failed migration is a failed deploy.
 
 ### Stock
 
-`Product.stock` is still the number that decides whether something can be sold,
-because the conditional decrement on it is what stops two people being sold the
-same last item. Beside it, `StockMove` records every movement and why: a sale, a
-cancellation, a reopened order, a resellable return, a delivery arriving, a
-recount, a write-off. Everything goes through `moveStock()` in
-`src/lib/inventory.ts`, in the same transaction as whatever caused it, so the
-shelf and the reason for it can never disagree.
+Two numbers, one truth. `Product.stock` decides whether something can be sold,
+because the conditional decrement on it is what stops two people buying the same
+last item. `StockMove` is the ledger beside it, so a quantity nobody expects can be
+explained instead of argued about.
 
-Adjustments from the admin panel post a difference rather than a total. A form
-that posts "there are now 12" throws away any sale that happened while it was
-open; `POST /api/products/:id/stock` takes `delta` and cannot. The product form
-still accepts an absolute number, and records the difference as a recount.
+```mermaid
+flowchart LR
+    subgraph one_transaction["one transaction"]
+        M["moveStock()"] --> S["Product.stock"]
+        M --> L["StockMove row"]
+    end
+    O["order paid or placed"] --> M
+    C["cancelled, or reopened"] --> M
+    R["resellable return"] --> M
+    A["admin: delivery in, recount, write-off"] --> M
+```
 
-`npm run check:stock` compares every product against the sum of its ledger and
+Everything goes through `moveStock()` in `src/lib/inventory.ts`, in the same
+transaction as whatever caused it, so the shelf and the reason for it can never
+disagree.
+
+| Reason | Written when |
+| --- | --- |
+| `INITIAL` | Product created, or given an opening balance by the ledger's migration |
+| `SALE` | Prepaid order paid, or cash order placed |
+| `CANCELLATION` | Order called off, units back |
+| `REOPEN` | Cancelled order restarted, units taken again |
+| `RETURN_RESTOCK` | Returned parcel judged sellable |
+| `RECEIVED` | New stock arrived |
+| `CORRECTION` | Counted the shelf and the number was wrong |
+| `DAMAGE` | Broken, lost or written off |
+
+Each product carries its own `lowStockThreshold` (5 by default), which drives the
+catalogue badge, the dashboard count, the "only a few left" line on the storefront,
+and a digest email at `LOW_STOCK_DIGEST_HOUR`.
+
+> [!IMPORTANT]
+> Admin adjustments post a **difference**, never a total. A form that says "there
+> are now 12" throws away any sale made while it was open;
+> `POST /api/products/:id/stock` takes `delta` and cannot. The product form still
+> accepts an absolute number and records the difference as a `CORRECTION`.
+
+<details>
+<summary>Checking the ledger, and why the digest cannot send four times</summary>
+
+`npm run check:stock` compares every product against the sum of its moves and
 exits non-zero on any disagreement. It needs a database, so it is a diagnostic
-rather than part of the build. Products that existed before the ledger were given
-an opening balance by its migration, so the sums start out true.
+rather than part of the build.
 
-Each product carries its own `lowStockThreshold` (5 by default). Anything at or
-below it counts as needing a reorder, which drives the badge in the catalogue, the
-dashboard count, the "only a few left" line on the storefront, and a digest email
-sent once a day at `LOW_STOCK_DIGEST_HOUR` (9am IST). The day it last ran is kept
-in `SystemFlag`, so a host that redeploys or wakes from sleep does not send the
-same list four times.
+The day the low-stock digest last ran is kept in `SystemFlag`, because a host that
+redeploys or wakes from sleep would otherwise send the same list on every boot.
+
+</details>
 
 ### Returns
 
