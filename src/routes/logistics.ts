@@ -287,7 +287,13 @@ router.get("/orders/:id/rates", authenticate, requireAdmin, async (req, res) => 
 
   try {
     const cart = await priceCart(
-      order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      // variantId included: a line that names a size has to be priced and
+      // weighed off that shelf, and priceCart refuses a bag that leaves it out.
+      order.items.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+      })),
       { placed: true }
     );
     const address = order.shippingAddress as { zip?: string } | null;
@@ -343,7 +349,13 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
 
   try {
     const cart = await priceCart(
-      order.items.map((item) => ({ productId: item.productId, quantity: item.quantity })),
+      // variantId included: a line that names a size has to be priced and
+      // weighed off that shelf, and priceCart refuses a bag that leaves it out.
+      order.items.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId,
+        quantity: item.quantity,
+      })),
       { placed: true }
     );
     let shipment = order.shipment;
@@ -369,19 +381,23 @@ router.post("/orders/:id/ship", authenticate, requireAdmin, async (req, res) => 
         country: address.country || "India",
         email: order.email ?? "orders@shukarsh.com",
         phone,
-        items: order.items.map((item) => ({
-          // The size goes in the name and the SKU, because this is what the
-          // packer reads off the label and what the courier prints on the
+        items: order.items.map((item) => {
+          // The colour and size go in the name and the SKU, because this is what
+          // the packer reads off the label and what the courier prints on the
           // manifest. A picking list that says "Cotton T-Shirt" three times is
-          // how the wrong size goes in the box.
-          name: item.variantLabel ? `${item.product.name} (${item.variantLabel})` : item.product.name,
-          sku: item.variantLabel
-            ? `${item.product.slug}-${item.variantLabel.toLowerCase().replace(/\s+/g, "-")}`
-            : item.product.slug,
-          units: item.quantity,
-          sellingPrice: Number(item.price),
-          hsn: item.product.hsn ?? undefined,
-        })),
+          // how the wrong one goes in the box.
+          const chosen = [item.variantColour, item.variantLabel].filter(Boolean).join(" ");
+
+          return {
+            name: chosen ? `${item.product.name} (${chosen})` : item.product.name,
+            sku: chosen
+              ? `${item.product.slug}-${chosen.toLowerCase().replace(/\s+/g, "-")}`
+              : item.product.slug,
+            units: item.quantity,
+            sellingPrice: Number(item.price),
+            hsn: item.product.hsn ?? undefined,
+          };
+        }),
         // Net of any coupon, because sub_total is the one figure Shiprocket
         // insures against and collects at the door. Sending it gross and the
         // discount separately would put the courier's arithmetic between us and
