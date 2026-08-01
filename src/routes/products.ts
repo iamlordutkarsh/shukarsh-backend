@@ -10,7 +10,12 @@ import {
   moveStock,
   serializeStockMove,
 } from "../lib/inventory";
-import { AttributeError, attributeAnswerSchema, saveProductAttributes } from "../lib/attributes";
+import {
+  AttributeError,
+  attributeAnswerSchema,
+  currentAnswers,
+  saveProductAttributes,
+} from "../lib/attributes";
 import { descendantIds } from "../lib/category";
 import { facetWhere, facetsFor, readFacets } from "../lib/facets";
 import { ratingSummaries, ratingSummary } from "../lib/reviews";
@@ -190,6 +195,8 @@ const variantsSchema = z.object({
 class NamelessVariantError extends Error {}
 /** A cell pointing at a colour that is not in the same payload. */
 class UnknownColourError extends Error {}
+/** An id that belongs to some other product. */
+class ForeignRowError extends Error {}
 
 /**
  * Everything serializeProduct needs, in the order things are drawn.
@@ -377,11 +384,21 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
     const product = await prisma.$transaction(async (tx) => {
       const updated = await tx.product.update({ where: { id }, data: fields });
 
-      // Re-checked against whichever category the product is in *after* this
-      // save, so moving it to a category that asks more questions is refused
-      // here rather than leaving it filed somewhere it cannot satisfy.
+      /**
+       * Re-checked against whichever category the product is in *after* this
+       * save, so moving it to a category that asks more questions is refused
+       * here rather than leaving it filed somewhere it cannot satisfy.
+       *
+       * A category change with no answers attached is re-checked too, against
+       * what the product already said. Skipping that let a partial update move a
+       * mug into Tshirts with no fabric and no sleeve — a state the create
+       * endpoint refuses outright — and left its old answers pointing at
+       * questions the new category never asks.
+       */
       if (attributes) {
         await saveProductAttributes(tx, id, updated.categoryId, attributes);
+      } else if (fields.categoryId) {
+        await saveProductAttributes(tx, id, updated.categoryId, await currentAnswers(tx, id));
       }
 
       /**
@@ -460,14 +477,20 @@ router.post("/:id/stock", authenticate, requireAdmin, async (req, res) => {
         select: { id: true },
       });
 
-      if (cells.length > 0) {
+      // Counted separately from the sellable cells above: a product whose every
+      // colour is off still keeps its shelves, and units aimed at one of them
+      // must be refused rather than quietly landing on the product total. That
+      // silent fallback is how a total came to disagree with its own cells.
+      const shelves = await tx.productVariant.count({ where: { productId: id } });
+
+      if (shelves > 0) {
         if (!result.data.variantId) throw new VariantRequiredError();
         if (!cells.some((cell) => cell.id === result.data.variantId)) throw new UnknownVariantError();
       }
 
       const balance = await moveStock(tx, {
         productId: id,
-        variantId: cells.length > 0 ? result.data.variantId : null,
+        variantId: shelves > 0 ? result.data.variantId : null,
         delta: result.data.delta,
         reason: result.data.reason,
         note: result.data.note,
@@ -584,6 +607,16 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
         wantedColours.map((colour) => colour.id).filter(Boolean) as string[]
       );
 
+      /**
+       * Cells the database removed for us when their colour was deleted.
+       *
+       * ProductVariant.colour cascades, so deleting a colour takes its cells with
+       * it — but `existing` was read before that happened and still lists them.
+       * Without this the removal loop below would try to delete a row Postgres
+       * had already taken, and Prisma's P2025 rolled the whole save back as a 404.
+       */
+      const cascaded = new Set<string>();
+
       for (const gone of existingColours.filter((colour) => !keptColourIds.has(colour.id))) {
         const [moves, sold] = await Promise.all([
           tx.stockMove.count({ where: { variant: { colourId: gone.id } } }),
@@ -591,6 +624,9 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
         ]);
 
         if (moves === 0 && sold === 0) {
+          for (const cell of existing.filter((variant) => variant.colourId === gone.id)) {
+            cascaded.add(cell.id);
+          }
           await tx.productColour.delete({ where: { id: gone.id } });
         } else {
           await tx.productColour.update({ where: { id: gone.id }, data: { isActive: false } });
@@ -614,6 +650,13 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
           position,
         };
 
+        // An id has to be one of this product's own. Prisma's update matches on
+        // the primary key alone, so without this a payload could name another
+        // product's colour and rewrite it from here.
+        if (colour.id && !existingColours.some((row) => row.id === colour.id)) {
+          throw new ForeignRowError();
+        }
+
         const saved = colour.id
           ? await tx.productColour.update({ where: { id: colour.id }, data })
           : await tx.productColour.create({ data: { productId: id, ...data } });
@@ -621,9 +664,26 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
         colourIdByName.set(colour.name.trim().toLowerCase(), saved.id);
       }
 
+      /**
+       * Colours that are off, so their cells can be switched off with them.
+       *
+       * A colour removed from the payload takes its cells down in the loop above.
+       * One that is merely toggled off never enters that branch, and its cells
+       * stayed sellable: the colour vanished from the public response while the
+       * shelves it owned kept their stock, so a product read as in stock with no
+       * swatch to pick and no way to buy it.
+       */
+      const offColourIds = new Set(
+        [...colourIdByName.entries()]
+          .filter(([name]) => wantedColours.some((c) => c.name.trim().toLowerCase() === name && !c.isActive))
+          .map(([, colourId]) => colourId)
+      );
+
       const keptIds = new Set(wanted.map((variant) => variant.id).filter(Boolean) as string[]);
 
-      for (const gone of existing.filter((variant) => !keptIds.has(variant.id))) {
+      for (const gone of existing.filter(
+        (variant) => !keptIds.has(variant.id) && !cascaded.has(variant.id)
+      )) {
         const [moves, sold] = await Promise.all([
           tx.stockMove.count({ where: { variantId: gone.id } }),
           tx.orderItem.count({ where: { variantId: gone.id } }),
@@ -652,9 +712,16 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
           // Undefined leaves an override alone; null clears it back to the
           // product's price. zod keeps the two apart, so this does too.
           ...(variant.price !== undefined ? { price: variant.price } : {}),
-          isActive: variant.isActive,
+          // A cell under a colour that is off is off too, whatever the payload
+          // says: the swatch it hangs from is not on sale.
+          isActive: variant.isActive && !(colourId && offColourIds.has(colourId)),
           position,
         };
+
+        // Same ownership check as the colours above.
+        if (variant.id && !existing.some((row) => row.id === variant.id)) {
+          throw new ForeignRowError();
+        }
 
         if (variant.id) {
           await tx.productVariant.update({ where: { id: variant.id }, data });
@@ -695,6 +762,11 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
 
     if (error instanceof NamelessVariantError) {
       res.status(400).json({ error: "An option needs a colour, a size, or both." });
+      return;
+    }
+
+    if (error instanceof ForeignRowError) {
+      res.status(400).json({ error: "One of those options belongs to a different product." });
       return;
     }
 
