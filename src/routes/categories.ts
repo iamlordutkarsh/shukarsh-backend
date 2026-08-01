@@ -285,6 +285,35 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
   const id = req.params.id as string;
 
   try {
+    /**
+     * A branch has to be emptied from the bottom up.
+     *
+     * The database only refuses a category with products filed *directly* on it.
+     * A parent holding none of its own passed that check and took its whole
+     * subtree with it: AttributeDefinition cascades, so every question it defined
+     * and every answer to them across the products below was destroyed, while
+     * Category.parentId is SET NULL, so its children silently became top-level
+     * departments in the menu.
+     */
+    const [children, below] = await Promise.all([
+      prisma.category.count({ where: { parentId: id } }),
+      prisma.product.count({ where: { categoryId: { in: await descendantIds(id) } } }),
+    ]);
+
+    if (children > 0) {
+      res.status(409).json({
+        error: "This category has subcategories. Move or delete those first.",
+      });
+      return;
+    }
+
+    if (below > 0) {
+      res.status(409).json({
+        error: "This category still has products in it. Move or delete those first.",
+      });
+      return;
+    }
+
     await prisma.category.delete({ where: { id } });
     forgetCategories();
     res.json({ message: "Category deleted" });
