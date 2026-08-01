@@ -487,7 +487,14 @@ router.get("/:id/recover", recoveryLimiter, async (req, res) => {
 
   const products = await prisma.product.findMany({
     where: { id: { in: lines.map((line) => line.productId) }, isActive: true },
-    include: { category: { select: { id: true, name: true, slug: true } } },
+    // Options included, or serializeProduct reports "sells as one thing" and the
+    // recovered bag cannot be repaired: the storefront reads an empty array as
+    // an answer rather than as a question this query never asked.
+    include: {
+      category: { select: { id: true, name: true, slug: true } },
+      variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+      colours: { orderBy: [{ position: "asc" }, { name: "asc" }] },
+    },
   });
 
   const quantityOf = new Map(lines.map((line) => [line.productId, line.quantity]));

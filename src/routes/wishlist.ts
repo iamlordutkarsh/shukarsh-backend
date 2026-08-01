@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../lib/prisma";
 import { serializeProducts } from "../lib/product";
@@ -6,7 +7,15 @@ import { authenticate } from "../middleware/auth";
 
 const router = Router();
 
-const productSelect = {
+/**
+ * Enough for serializeProduct to tell the truth about what is buyable.
+ *
+ * Without the options it returns `variants: []`, which reads as "sells as one
+ * thing" rather than "this query did not ask": a card then quotes the base price
+ * for something every cell overrides, hides the swatches, and its one-tap add
+ * puts a line in the bag with no size that checkout refuses.
+ */
+const productSelect: Prisma.ProductSelect = {
   id: true,
   name: true,
   slug: true,
@@ -19,7 +28,9 @@ const productSelect = {
   categoryId: true,
   createdAt: true,
   category: { select: { id: true, name: true, slug: true } },
-} as const;
+  variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
+  colours: { orderBy: [{ position: "asc" }, { name: "asc" }] },
+};
 
 const addSchema = z.object({ productId: z.string().min(1) });
 const mergeSchema = z.object({ productIds: z.array(z.string().min(1)).max(200) });
