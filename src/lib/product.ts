@@ -101,6 +101,8 @@ export interface SerializedColour {
   id: string;
   name: string;
   hex: string | null;
+  /** The other half of a two-tone swatch. Null draws a plain circle. */
+  hex2: string | null;
   images: string[];
   position: number;
   isActive: boolean;
@@ -253,6 +255,7 @@ export function serializeProduct(
         id: colour.id,
         name: colour.name,
         hex: colour.hex ?? null,
+        hex2: colour.hex2 ?? null,
         images: colour.images ?? [],
         position: colour.position,
         isActive: colour.isActive,

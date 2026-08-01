@@ -19,6 +19,13 @@ import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
 
 const router = Router();
 
+const hexSchema = z
+  .string()
+  .trim()
+  .regex(/^#[0-9a-fA-F]{6}$/, "A colour has to be a hex code like #1a2b3c")
+  .optional()
+  .nullable();
+
 /** One row of the spec table: "Material", "Stainless steel". */
 const specSchema = z.object({
   label: z.string().trim().min(1).max(40),
@@ -137,12 +144,9 @@ const variantsSchema = z.object({
         id: z.string().uuid().optional(),
         name: z.string().trim().min(1).max(40),
         /** `#rrggbb`, or nothing for a colour that has no sensible hex. */
-        hex: z
-          .string()
-          .trim()
-          .regex(/^#[0-9a-fA-F]{6}$/, "A colour has to be a hex code like #1a2b3c")
-          .optional()
-          .nullable(),
+        hex: hexSchema,
+        /** Set only for a print or a stripe no single colour describes. */
+        hex2: hexSchema,
         images: z.array(z.string()).max(8).default([]),
         isActive: z.boolean().default(true),
       })
@@ -588,6 +592,7 @@ router.put("/:id/variants", authenticate, requireAdmin, async (req, res) => {
         const data = {
           name: colour.name,
           hex: colour.hex ?? null,
+          hex2: colour.hex2 ?? null,
           images: colour.images,
           isActive: colour.isActive,
           position,
