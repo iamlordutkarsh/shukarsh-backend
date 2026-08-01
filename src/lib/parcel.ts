@@ -57,6 +57,10 @@ export function createTtlCache<T>(ttlSeconds: number) {
       if (store.size > 500) store.clear();
       store.set(key, { value, expiresAt: Date.now() + ttlSeconds * 1000 });
     },
+    /** For a cache whose source can change: drop the entry rather than wait it out. */
+    forget(key: string) {
+      store.delete(key);
+    },
   };
 }
 
