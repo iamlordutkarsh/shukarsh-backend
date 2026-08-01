@@ -1,4 +1,5 @@
 import { prisma } from "./prisma";
+import { createTtlCache } from "./parcel";
 
 export interface SerializedCategory {
   id: string;
@@ -87,24 +88,70 @@ export function buildTree(categories: any[]): SerializedCategory[] {
   return roots;
 }
 
+interface CategoryRow {
+  id: string;
+  name: string;
+  slug: string;
+  parentId: string | null;
+}
+
+/**
+ * Every category, cached for a minute.
+ *
+ * The tree is read on nearly every catalogue request — to find a page's
+ * ancestors, and to find everything filed below it — and it changes about as
+ * often as the shop is rearranged. Reading it per request cost one query per
+ * level per call, and the pooler in front of this database allows fifteen
+ * clients in total: a handful of visitors was enough to exhaust it and take the
+ * process down with `max clients reached`.
+ *
+ * A whole catalogue's categories are a few hundred rows at worst, so one read
+ * and a walk in memory is both cheaper and far kinder to the pool than any
+ * number of clever queries.
+ */
+const categoryCache = createTtlCache<CategoryRow[]>(60);
+
+async function allCategories(): Promise<CategoryRow[]> {
+  const cached = categoryCache.get("all");
+  if (cached) return cached;
+
+  const rows = await prisma.category.findMany({
+    select: { id: true, name: true, slug: true, parentId: true },
+  });
+
+  categoryCache.set("all", rows);
+  return rows;
+}
+
+/**
+ * Drops the cached tree.
+ *
+ * Called by whatever writes a category, so an admin who adds one sees it on the
+ * next screen rather than up to a minute later. Wrong-looking staleness in the
+ * admin is worse than the read it saves.
+ */
+export function forgetCategories(): void {
+  categoryCache.forget("all");
+}
+
 /**
  * A category and every ancestor above it, root first.
  *
- * Walks upwards one read at a time. A tree deep enough for that to matter is a
- * tree nobody can navigate either, and the loop is bounded so a parent chain that
- * somehow points at itself stops rather than hanging the request.
+ * Walked in memory off one cached read. The loop is still bounded, because a
+ * parent chain that somehow points at itself must stop rather than hang the
+ * request — the API refuses to create one, but a database restored from
+ * elsewhere owes us nothing.
  */
-export async function ancestorsOf(categoryId: string): Promise<any[]> {
-  const chain: any[] = [];
+export async function ancestorsOf(categoryId: string): Promise<CategoryRow[]> {
+  const byId = new Map((await allCategories()).map((category) => [category.id, category]));
+
+  const chain: CategoryRow[] = [];
   const seen = new Set<string>();
   let currentId: string | null = categoryId;
 
   while (currentId && !seen.has(currentId)) {
     seen.add(currentId);
-    const category: any = await prisma.category.findUnique({
-      where: { id: currentId },
-      select: { id: true, name: true, slug: true, parentId: true },
-    });
+    const category = byId.get(currentId);
     if (!category) break;
     chain.unshift(category);
     currentId = category.parentId;
@@ -171,7 +218,7 @@ export async function effectiveAttributes(categoryId: string): Promise<Serialize
 
 /** Every category at or below this one, for a listing that includes subcategories. */
 export async function descendantIds(categoryId: string): Promise<string[]> {
-  const all = await prisma.category.findMany({ select: { id: true, parentId: true } });
+  const all = await allCategories();
 
   const childrenOf = new Map<string, string[]>();
   for (const category of all) {
