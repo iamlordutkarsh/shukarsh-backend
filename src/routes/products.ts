@@ -12,6 +12,7 @@ import {
 } from "../lib/inventory";
 import { AttributeError, attributeAnswerSchema, saveProductAttributes } from "../lib/attributes";
 import { descendantIds } from "../lib/category";
+import { facetWhere, facetsFor, readFacets } from "../lib/facets";
 import { ratingSummaries, ratingSummary } from "../lib/reviews";
 import { GST_RATES, defaultGstRate } from "../lib/tax";
 import { authenticate, isAdminRequest, requireAdmin } from "../middleware/auth";
@@ -230,19 +231,29 @@ router.get("/", perCaller, async (req, res) => {
   const sortKey = req.query.sort as SortKey | undefined;
   const orderBy = sortKey && sortKey in sortOptions ? sortOptions[sortKey] : sortOptions.newest;
 
-  const where: any = { isActive: true };
+  /**
+   * What the shopper narrowed to, before any attribute filter is applied.
+   *
+   * Kept apart from `where` because the facet counts are worked out against it:
+   * each facet is counted with its own filter lifted, so ticking one option does
+   * not zero every sibling beside it.
+   */
+  const base: Prisma.ProductWhereInput = { isActive: true };
   // Everything at or below the category asked for. Matching it exactly empties
   // every page above the leaves: a shirt filed under Tshirts would show nothing
   // on Men Fashion, which is the page the menu actually links to.
-  if (categoryId) where.categoryId = { in: await descendantIds(categoryId) };
+  if (categoryId) base.categoryId = { in: await descendantIds(categoryId) };
   if (search) {
-    where.OR = [
+    base.OR = [
       { name: { contains: search, mode: "insensitive" } },
       { description: { contains: search, mode: "insensitive" } },
     ];
   }
 
-  const [products, total] = await Promise.all([
+  const selected = readFacets(req.query.a);
+  const where: Prisma.ProductWhereInput = { AND: [base, ...facetWhere(selected)] };
+
+  const [products, total, facets] = await Promise.all([
     prisma.product.findMany({
       where,
       skip: (page - 1) * limit,
@@ -251,6 +262,11 @@ router.get("/", perCaller, async (req, res) => {
       include: productInclude,
     }),
     prisma.product.count({ where }),
+    // Only where there is something to narrow. A filter panel on an unfiltered
+    // catalogue of everything is a query nobody asked for on every page load.
+    categoryId || search || Object.keys(selected).length > 0
+      ? facetsFor({ base, selected })
+      : Promise.resolve([]),
   ]);
 
   // One grouped query for the whole page, after the page is known. Asking per
@@ -266,6 +282,7 @@ router.get("/", perCaller, async (req, res) => {
       includeHidden: isAdminRequest(req),
       ratings,
     }),
+    facets,
     pagination: { page, limit, total, pages: Math.ceil(total / limit) },
   });
 });
