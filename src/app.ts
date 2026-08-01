@@ -1,3 +1,14 @@
+/**
+ * Sends an async handler's rejection to the error middleware below.
+ *
+ * Express 4 only catches what a handler throws synchronously; a rejected promise
+ * escapes it entirely. That took the whole service down once — Node exits on an
+ * unhandled rejection — and after that was guarded it left the request hanging
+ * instead. This is imported first, before any route is defined, because it works
+ * by patching the router.
+ */
+import "express-async-errors";
+
 import express, { Request, Response, NextFunction } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -64,8 +75,10 @@ app.use((_req, res) => {
   res.status(404).json({ error: "Route not found" });
 });
 
-app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
-  console.error(err.stack);
+app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  // The path is worth logging: this now catches async rejections too, and
+  // "Something went wrong" with no route attached is not a lead.
+  console.error(`Unhandled error on ${req.method} ${req.originalUrl}:`, err);
   res.status(500).json({ error: "Something went wrong" });
 });
 
