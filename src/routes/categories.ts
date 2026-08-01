@@ -8,6 +8,7 @@ import {
   buildTree,
   descendantIds,
   effectiveAttributes,
+  forgetCategories,
   serializeCategory,
 } from "../lib/category";
 import { authenticate, requireAdmin } from "../middleware/auth";
@@ -49,26 +50,38 @@ const attributeSchema = z.object({
  * `categories`. One read answers both.
  */
 router.get("/", async (_req, res) => {
-  const categories = await prisma.category.findMany({
-    orderBy: [{ position: "asc" }, { name: "asc" }],
-  });
+  try {
+    const categories = await prisma.category.findMany({
+      orderBy: [{ position: "asc" }, { name: "asc" }],
+    });
 
-  res.json({ categories: categories.map(serializeCategory), tree: buildTree(categories) });
+    res.json({ categories: categories.map(serializeCategory), tree: buildTree(categories) });
+  } catch (error) {
+    // Answered rather than left to reject. An unhandled rejection here took the
+    // whole process down once, which turned one slow query into an outage.
+    console.error("Could not read the categories:", error);
+    res.status(503).json({ error: "Could not load the categories just now" });
+  }
 });
 
 /** Every question a product filed here has to answer, ancestors included. */
 router.get("/:id/attributes", async (req, res) => {
-  const category = await prisma.category.findUnique({
-    where: { id: req.params.id as string },
-    select: { id: true },
-  });
+  try {
+    const category = await prisma.category.findUnique({
+      where: { id: req.params.id as string },
+      select: { id: true },
+    });
 
-  if (!category) {
-    res.status(404).json({ error: "Category not found" });
-    return;
+    if (!category) {
+      res.status(404).json({ error: "Category not found" });
+      return;
+    }
+
+    res.json({ attributes: await effectiveAttributes(category.id) });
+  } catch (error) {
+    console.error("Could not read a category's questions:", error);
+    res.status(503).json({ error: "Could not load these questions just now" });
   }
-
-  res.json({ attributes: await effectiveAttributes(category.id) });
 });
 
 /**
@@ -163,41 +176,48 @@ router.delete("/:id/attributes/:key", authenticate, requireAdmin, async (req, re
 });
 
 router.get("/:slug", async (req, res) => {
-  const category = await prisma.category.findUnique({ where: { slug: req.params.slug } });
+  try {
+    const category = await prisma.category.findUnique({ where: { slug: req.params.slug } });
 
-  if (!category) {
-    res.status(404).json({ error: "Category not found" });
-    return;
-  }
+    if (!category) {
+      res.status(404).json({ error: "Category not found" });
+      return;
+    }
 
-  /**
-   * Products filed anywhere at or below here.
-   *
-   * Asking only for the exact category empties every page above the leaves: a
-   * shop that files a shirt under Tshirts has nothing to show on Men Fashion,
-   * which is the page the menu actually links to.
-   */
-  const ids = await descendantIds(category.id);
+    /**
+     * Products filed anywhere at or below here.
+     *
+     * Asking only for the exact category empties every page above the leaves: a
+     * shop that files a shirt under Tshirts has nothing to show on Men Fashion,
+     * which is the page the menu actually links to.
+     */
+    const ids = await descendantIds(category.id);
 
-  const [products, path] = await Promise.all([
-    prisma.product.findMany({
+    // One after the other rather than together. Both want a connection, and the
+    // pooler in front of this database allows fifteen across the whole service:
+    // asking for two at once per visitor is how it ran out.
+    const path = await ancestorsOf(category.id);
+    const products = await prisma.product.findMany({
       where: { categoryId: { in: ids }, isActive: true },
       orderBy: { createdAt: "desc" },
       include: {
         variants: { orderBy: [{ position: "asc" }, { label: "asc" }] },
         colours: { orderBy: [{ position: "asc" }, { name: "asc" }] },
       },
-    }),
-    ancestorsOf(category.id),
-  ]);
+    });
 
-  res.json({
-    category: {
-      ...serializeCategory(category),
-      path: path.map((crumb) => ({ id: crumb.id, name: crumb.name, slug: crumb.slug })),
-      products: serializeProducts(products),
-    },
-  });
+    res.json({
+      category: {
+        ...serializeCategory(category),
+        path: path.map((crumb) => ({ id: crumb.id, name: crumb.name, slug: crumb.slug })),
+        products: serializeProducts(products),
+      },
+    });
+  } catch (error) {
+    // This is the handler whose rejection restarted the service.
+    console.error("Could not read a category:", error);
+    res.status(503).json({ error: "Could not load this collection just now" });
+  }
 });
 
 router.post("/", authenticate, requireAdmin, async (req, res) => {
@@ -209,7 +229,9 @@ router.post("/", authenticate, requireAdmin, async (req, res) => {
 
   try {
     const category = await prisma.category.create({ data: result.data });
-    res.status(201).json({ category });
+    // The tree is cached for a minute; an admin must see their own change now.
+    forgetCategories();
+    res.status(201).json({ category: serializeCategory(category) });
   } catch (error) {
     handleWriteError(res, error, {
       duplicate: "A category already uses that slug",
@@ -248,6 +270,7 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
       where: { id },
       data: result.data,
     });
+    forgetCategories();
     res.json({ category: serializeCategory(category) });
   } catch (error) {
     handleWriteError(res, error, {
@@ -263,6 +286,7 @@ router.delete("/:id", authenticate, requireAdmin, async (req, res) => {
 
   try {
     await prisma.category.delete({ where: { id } });
+    forgetCategories();
     res.json({ message: "Category deleted" });
   } catch (error) {
     handleWriteError(res, error, {
