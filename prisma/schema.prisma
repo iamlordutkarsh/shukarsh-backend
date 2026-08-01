@@ -300,6 +300,10 @@ model ProductColour {
   /// with the name in it, because a colour nobody can name in hex is still a
   /// colour worth selling.
   hex       String?
+  /// The second half of a two-tone swatch, for a print, a stripe or anything
+  /// else no single colour describes. Null is the ordinary case and draws a
+  /// plain circle; set, and the swatch is split between the two.
+  hex2      String?
   /// This colour's own photos. Empty falls back to the product's, so a shop that
   /// only has one set of pictures is not forced to upload them per colour.
   images    String[] @default([])
@@ -314,6 +318,28 @@ model ProductColour {
 
   @@unique([productId, name])
   @@index([productId])
+}
+
+/// The shop's own list of colours, reused across products.
+///
+/// Exists because ProductColour.name is free text, and free text drifts: one
+/// product says "Navy", the next "navy blue", the third "Dark Blue", and they are
+/// three colours with three sets of photos that no filter can ever bring
+/// together. Picking from a list at the point of typing is what stops that.
+///
+/// Deliberately not a foreign key from ProductColour. A product's colour still
+/// owns its own name, hex and photos, so retiring a preset cannot repaint
+/// products already using it, and a one-off colour that never joins the palette
+/// is still possible. The palette guides the typing; it does not own the result.
+model ColourPreset {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  hex       String?
+  /// The second half of a two-tone swatch, as on ProductColour.
+  hex2      String?
+  position  Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 /// One buyable cell of a product: a colour, a size, or the pairing of the two.
