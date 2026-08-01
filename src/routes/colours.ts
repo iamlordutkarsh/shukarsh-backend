@@ -64,11 +64,24 @@ router.put("/", authenticate, requireAdmin, async (req, res) => {
     const colours = await prisma.$transaction(async (tx) => {
       const keptIds = new Set(wanted.map((colour) => colour.id).filter(Boolean) as string[]);
 
-      // Nothing points at a preset, so removing one is a plain delete: the
-      // products that used it keep their own copy of the name and the hex.
-      await tx.colourPreset.deleteMany({
-        where: keptIds.size > 0 ? { id: { notIn: [...keptIds] } } : {},
-      });
+      /**
+       * Nothing points at a preset, so removing one is a plain delete: the
+       * products that used it keep their own copy of the name and the hex.
+       *
+       * Pruning only happens when the payload proves it knows what is already
+       * there, by carrying at least one existing id. A list of nothing but new
+       * colours is treated as additive.
+       *
+       * That distinction matters because the admin screen falls back to an empty
+       * list when the palette fails to load: saving one colour from that state
+       * used to arrive here with no ids at all and delete the whole palette.
+       * Clearing it deliberately still works — an empty payload says so.
+       */
+      if (wanted.length === 0) {
+        await tx.colourPreset.deleteMany({});
+      } else if (keptIds.size > 0) {
+        await tx.colourPreset.deleteMany({ where: { id: { notIn: [...keptIds] } } });
+      }
 
       for (const [position, colour] of wanted.entries()) {
         const data = {
