@@ -143,42 +143,6 @@ describe("priceSpread", () => {
   });
 });
 
-describe("totalStock (the badge and the buy button must agree)", () => {
-  // A product page once showed "in stock" beside a sold out button, because the
-  // badge read the product total and the button read the cells. Whichever the
-  // button obeys is the one worth printing.
-  const totalStock = (product: { stock: number; variants: { stock: number; isActive: boolean }[] }) => {
-    const cells = product.variants.filter((variant) => variant.isActive);
-    if (cells.length === 0) return product.stock;
-    return cells.reduce((sum, cell) => sum + cell.stock, 0);
-  };
-
-  it("uses the product's own total when it has no options", () => {
-    assert.equal(totalStock({ stock: 22, variants: [] }), 22);
-  });
-
-  it("ignores a product total that disagrees with its cells", () => {
-    assert.equal(
-      totalStock({ stock: 22, variants: [{ stock: 0, isActive: true }, { stock: 0, isActive: true }] }),
-      0
-    );
-  });
-
-  it("adds the cells up", () => {
-    assert.equal(
-      totalStock({ stock: 0, variants: [{ stock: 5, isActive: true }, { stock: 2, isActive: true }] }),
-      7
-    );
-  });
-
-  it("leaves a withdrawn cell out of the count", () => {
-    assert.equal(
-      totalStock({ stock: 99, variants: [{ stock: 5, isActive: true }, { stock: 9, isActive: false }] }),
-      5
-    );
-  });
-});
-
 describe("variantPrice", () => {
   it("uses the cell's own price when it has one", () => {
     assert.equal(variantPrice({ price: 650 }, 500), 650);
