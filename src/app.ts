@@ -3,6 +3,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import authRoutes from "./routes/auth";
 import categoryRoutes from "./routes/categories";
+import colourRoutes from "./routes/colours";
 import productRoutes from "./routes/products";
 import orderRoutes from "./routes/orders";
 import newsletterRoutes from "./routes/newsletter";
@@ -47,6 +48,7 @@ app.get("/", (_req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/categories", categoryRoutes);
+app.use("/api/colours", colourRoutes);
 app.use("/api/products", productRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/newsletter", newsletterRoutes);
