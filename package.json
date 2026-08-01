@@ -13,6 +13,7 @@
     "test": "node --require ts-node/register --test \"tests/*.test.ts\"",
     "check:tax": "ts-node scripts/check-tax.ts",
     "check:stock": "ts-node scripts/check-stock.ts",
+    "fix:stock": "ts-node scripts/fix-stock-drift.ts",
     "check:catalogue": "ts-node scripts/check-catalogue.ts",
     "seed:structure": "ts-node scripts/seed-structure.ts",
     "check:emails": "ts-node scripts/check-emails.ts",
