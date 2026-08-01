@@ -1,6 +1,14 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "./prisma";
 
+/**
+ * How many filters may be offered at once.
+ *
+ * Each one costs a query, and the pooler allows fifteen clients across the whole
+ * service, so this is a budget rather than a preference.
+ */
+const MAX_FACETS = 8;
+
 /** What was picked, keyed by the question's key: `{ fabric: ["Cotton"] }`. */
 export type SelectedFacets = Record<string, string[]>;
 
@@ -85,8 +93,10 @@ export async function facetsFor(params: {
 }): Promise<Facet[]> {
   const { base, selected } = params;
 
-  // Which questions the matching products answer at all. Bounded, because a
-  // filter panel with forty rows in it is not a filter panel.
+  // Which questions the matching products answer at all. Capped hard, because
+  // each one below costs a query, and the pooler in front of this database
+  // allows fifteen clients in total. A filter panel with eight rows in it is
+  // already more than anybody reads.
   const answered = await prisma.productAttribute.findMany({
     where: {
       product: { AND: [base, ...facetWhere(selected)] },
@@ -95,7 +105,7 @@ export async function facetsFor(params: {
     },
     select: { definitionId: true },
     distinct: ["definitionId"],
-    take: 12,
+    take: MAX_FACETS,
   });
 
   if (answered.length === 0) return [];
@@ -106,40 +116,44 @@ export async function facetsFor(params: {
     orderBy: { position: "asc" },
   });
 
-  // One grouped count per facet. A handful of small queries rather than one
-  // clever one: the alternative is counting in memory over every matching
-  // product, which is worse the moment the catalogue is not tiny.
-  const facets = await Promise.all(
-    definitions.map(async (definition) => {
-      const counts = await prisma.productAttribute.groupBy({
-        by: ["optionId"],
-        where: {
-          definitionId: definition.id,
-          product: { AND: [base, ...facetWhere(selected, definition.key)] },
-        },
-        _count: { productId: true },
-      });
+  /**
+   * One grouped count per facet, run **one at a time**.
+   *
+   * This was a Promise.all, which asked the database for every facet at once and
+   * took a connection for each. Behind a pooler that allows fifteen clients in
+   * total, a single visitor opening a filtered category could exhaust it, and the
+   * error that came back was fatal enough to restart the process.
+   *
+   * Sequential is slower by the round trip, and that is the right trade: a filter
+   * panel that takes an extra moment beats a shop that falls over.
+   */
+  const facets: Facet[] = [];
 
-      const countByOption = new Map(
-        counts.map((row) => [row.optionId, row._count.productId])
-      );
-      const picked = selected[definition.key] ?? [];
+  for (const definition of definitions) {
+    const counts = await prisma.productAttribute.groupBy({
+      by: ["optionId"],
+      where: {
+        definitionId: definition.id,
+        product: { AND: [base, ...facetWhere(selected, definition.key)] },
+      },
+      _count: { productId: true },
+    });
 
-      return {
-        key: definition.key,
-        label: definition.label,
-        values: definition.options
-          .map((option) => ({
-            value: option.value,
-            count: countByOption.get(option.id) ?? 0,
-            selected: picked.includes(option.value),
-          }))
-          // An option nothing has is noise, unless it is already ticked: hiding
-          // that would strand a shopper on a filter they cannot see to remove.
-          .filter((value) => value.count > 0 || value.selected),
-      };
-    })
-  );
+    const countByOption = new Map(counts.map((row) => [row.optionId, row._count.productId]));
+    const picked = selected[definition.key] ?? [];
 
-  return facets.filter((facet) => facet.values.length > 0);
+    const values = definition.options
+      .map((option) => ({
+        value: option.value,
+        count: countByOption.get(option.id) ?? 0,
+        selected: picked.includes(option.value),
+      }))
+      // An option nothing has is noise, unless it is already ticked: hiding that
+      // would strand a shopper on a filter they cannot see to remove.
+      .filter((value) => value.count > 0 || value.selected);
+
+    if (values.length > 0) facets.push({ key: definition.key, label: definition.label, values });
+  }
+
+  return facets;
 }
