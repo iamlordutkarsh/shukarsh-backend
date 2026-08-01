@@ -28,6 +28,36 @@ export type AttributeAnswer = z.infer<typeof attributeAnswerSchema>;
 export class AttributeError extends Error {}
 
 /**
+ * What a product already answered, in the shape a save takes.
+ *
+ * Lets a category change be re-checked without the caller having to resend the
+ * answers: the same rows go back through saveProductAttributes against the new
+ * category, so a required question the product cannot satisfy is refused rather
+ * than silently left blank.
+ */
+export async function currentAnswers(tx: Db, productId: string): Promise<AttributeAnswer[]> {
+  const rows = await tx.productAttribute.findMany({
+    where: { productId },
+    include: { definition: { select: { key: true, kind: true } }, option: { select: { value: true } } },
+  });
+
+  const byKey = new Map<string, AttributeAnswer>();
+
+  for (const row of rows) {
+    const key = row.definition.key;
+    const answer = byKey.get(key) ?? { key, values: [], text: null, number: null };
+
+    if (row.option) answer.values.push(row.option.value);
+    if (row.valueText != null) answer.text = row.valueText;
+    if (row.valueNumber != null) answer.number = Number(row.valueNumber);
+
+    byKey.set(key, answer);
+  }
+
+  return [...byKey.values()];
+}
+
+/**
  * Replaces a product's answers, having checked them against its category.
  *
  * Everything is validated before anything is written, and the whole thing runs
