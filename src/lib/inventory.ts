@@ -231,6 +231,18 @@ export function serializeStockMove(move: any) {
     reason: move.reason,
     note: move.note ?? null,
     orderId: move.orderId ?? null,
+    /**
+     * Which shelf this landed on, or null for a product that has no options.
+     *
+     * Worth showing, because "in stock" and "sold out" disagreeing on one page is
+     * almost always units on the product total rather than on a size — and
+     * without this the ledger reports the movement while staying silent on the
+     * one detail that explains it.
+     */
+    variantId: move.variantId ?? null,
+    shelf: move.variant
+      ? [move.variant.colour?.name, move.variant.label].filter(Boolean).join(" · ") || null
+      : null,
     by: move.user ? [move.user.firstName, move.user.lastName].filter(Boolean).join(" ") || null : null,
     createdAt: move.createdAt,
   };

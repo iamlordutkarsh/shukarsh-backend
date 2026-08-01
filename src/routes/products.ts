@@ -714,7 +714,10 @@ router.get("/:id/stock-moves", authenticate, requireAdmin, async (req, res) => {
     where: { productId: req.params.id as string },
     orderBy: { createdAt: "desc" },
     take: limit,
-    include: { user: { select: { firstName: true, lastName: true } } },
+    include: {
+      user: { select: { firstName: true, lastName: true } },
+      variant: { select: { label: true, colour: { select: { name: true } } } },
+    },
   });
 
   res.json({ moves: moves.map(serializeStockMove) });
