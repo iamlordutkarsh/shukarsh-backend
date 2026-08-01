@@ -384,7 +384,23 @@ router.put("/:id", authenticate, requireAdmin, async (req, res) => {
         await saveProductAttributes(tx, id, updated.categoryId, attributes);
       }
 
-      if (wantedStock !== undefined && wantedStock !== updated.stock) {
+      /**
+       * Once a product has cells, its total is only their sum and cannot be set
+       * here.
+       *
+       * Ignored rather than refused, because the number arrives on a form that
+       * is mostly about other things: rejecting the whole save would stop
+       * someone fixing a typo in the name. The form no longer offers the field
+       * on a product with options, and an older client that still sends it must
+       * not be able to put a figure on the product that no shelf backs.
+       *
+       * This is the bug that made a product read "in stock" beside a sold out
+       * button: the total said 22, every cell said nothing, and both were being
+       * shown at once.
+       */
+      const cells = await tx.productVariant.count({ where: { productId: id } });
+
+      if (cells === 0 && wantedStock !== undefined && wantedStock !== updated.stock) {
         // A form posts where the count should end up, not by how much it moved,
         // so the difference is worked out here and recorded as a correction.
         await moveStock(tx, {
