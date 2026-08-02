@@ -15,6 +15,17 @@ const MAX_ADDRESSES = 20;
 /** The saved-address shape is the shipping one plus whether it is the default. */
 const addressSchema = shippingAddressSchema.extend({ isDefault: z.boolean().default(false) });
 
+/**
+ * The first thing actually wrong with it, rather than "Invalid address".
+ *
+ * The client shows `error` and drops `details`, so a generic message leaves
+ * somebody staring at a form with seven fields and no idea which one it objects
+ * to. The schema already words these for a reader.
+ */
+function firstProblem(error: z.ZodError): string {
+  return error.issues[0]?.message ?? "Invalid address";
+}
+
 const selection = {
   id: true,
   name: true,
@@ -46,7 +57,7 @@ router.get("/", async (req, res) => {
 router.post("/", async (req, res) => {
   const result = addressSchema.safeParse(req.body);
   if (!result.success) {
-    res.status(400).json({ error: "Invalid address", details: result.error.flatten() });
+    res.status(400).json({ error: firstProblem(result.error), details: result.error.flatten() });
     return;
   }
 
@@ -78,7 +89,7 @@ router.post("/", async (req, res) => {
 router.put("/:id", async (req, res) => {
   const result = addressSchema.safeParse(req.body);
   if (!result.success) {
-    res.status(400).json({ error: "Invalid address", details: result.error.flatten() });
+    res.status(400).json({ error: firstProblem(result.error), details: result.error.flatten() });
     return;
   }
 
