@@ -8,16 +8,39 @@ import { CUSTOMER_PREFIX, deleteImage, isStorageConfigured, uploadImage } from "
 
 const router = Router();
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024;
+/**
+ * The catalogue is shot on a phone, and a modern phone clears 5 MB a frame
+ * without trying. Multer buffers every file in memory before the handler runs,
+ * so the ceiling here is `MAX_FILES × MAX_FILE_SIZE` of RAM on one request —
+ * raise either and check the instance can still take the spike.
+ */
+const MAX_FILE_SIZE = 10 * 1024 * 1024;
 const MAX_FILES = 8;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/webp", "image/avif", "image/gif"];
+
+/** iPhones shoot these by default and no browser can display either. */
+const APPLE_TYPES = ["image/heic", "image/heif"];
+
+function screenType(mimetype: string): Error | null {
+  if (ALLOWED_TYPES.includes(mimetype)) return null;
+  if (APPLE_TYPES.includes(mimetype)) {
+    return new Error(
+      "iPhone HEIC photos cannot be shown in a browser. On the phone, " +
+        "Settings > Camera > Formats > Most Compatible, or export the shot as JPEG first."
+    );
+  }
+  return new Error("Only JPEG, PNG, WebP, AVIF or GIF images are allowed");
+}
+
+const megabytes = (bytes: number) => `${Math.round(bytes / 1024 / 1024)} MB`;
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE, files: MAX_FILES },
   fileFilter: (_req, file, cb) => {
-    if (!ALLOWED_TYPES.includes(file.mimetype)) {
-      cb(new Error("Only JPEG, PNG, WebP, AVIF or GIF images are allowed"));
+    const problem = screenType(file.mimetype);
+    if (problem) {
+      cb(problem);
       return;
     }
     cb(null, true);
@@ -36,8 +59,9 @@ const customerUpload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: CUSTOMER_MAX_FILE_SIZE, files: CUSTOMER_MAX_FILES },
   fileFilter: (_req, file, cb) => {
-    if (!ALLOWED_TYPES.includes(file.mimetype)) {
-      cb(new Error("Only JPEG, PNG, WebP, AVIF or GIF images are allowed"));
+    const problem = screenType(file.mimetype);
+    if (problem) {
+      cb(problem);
       return;
     }
     cb(null, true);
@@ -56,7 +80,7 @@ router.post("/", authenticate, requireAdmin, (req, res) => {
     if (uploadError) {
       const message =
         uploadError instanceof multer.MulterError && uploadError.code === "LIMIT_FILE_SIZE"
-          ? "Each image must be smaller than 5 MB"
+          ? `Each image must be smaller than ${megabytes(MAX_FILE_SIZE)}`
           : uploadError.message || "Upload failed";
       res.status(400).json({ error: message });
       return;
@@ -95,7 +119,7 @@ router.post("/returns", authenticate, customerUploadLimiter, (req, res) => {
     if (uploadError) {
       const message =
         uploadError instanceof multer.MulterError && uploadError.code === "LIMIT_FILE_SIZE"
-          ? "Each photo must be smaller than 8 MB"
+          ? `Each photo must be smaller than ${megabytes(CUSTOMER_MAX_FILE_SIZE)}`
           : uploadError instanceof multer.MulterError && uploadError.code === "LIMIT_FILE_COUNT"
             ? `Up to ${CUSTOMER_MAX_FILES} photos, please`
             : uploadError.message || "Upload failed";
