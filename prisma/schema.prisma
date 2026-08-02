@@ -133,22 +133,22 @@ model Address {
 }
 
 model Category {
-  id          String           @id @default(uuid())
+  id          String                @id @default(uuid())
   name        String
-  slug        String           @unique
+  slug        String                @unique
   description String?
   image       String?
   /// Order among its siblings. A menu is not alphabetical: "Men Top Wear" comes
   /// before "Men Inner & Sleepwear" because that is the order the shop sells in.
-  position    Int              @default(0)
+  position    Int                   @default(0)
   parentId    String?
-  parent      Category?        @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children    Category[]       @relation("CategoryHierarchy")
+  parent      Category?             @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[]            @relation("CategoryHierarchy")
   products    Product[]
   coupons     CouponCategory[]
   attributes  AttributeDefinition[]
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
 
   @@index([parentId])
 }
@@ -518,6 +518,11 @@ model Order {
   /// Buyer's state at the time of the order. GSTR-1 is filed state-wise, and a
   /// customer editing their address later must not rewrite past returns.
   placeOfSupply     String?
+  /// Consecutive serial number required on a tax invoice by rule 46 of the CGST
+  /// Rules. Assigned once the order is real — payment confirmed, or placed for
+  /// cash — and never reused or renumbered afterwards.
+  invoiceNumber     String?           @unique
+  invoicedAt        DateTime?
   courierId         Int?
   courierName       String?
   /// First time the order was seen delivered. The return window counts from
@@ -781,4 +786,19 @@ model Review {
 
   @@unique([userId, productId])
   @@index([productId, hiddenAt])
+}
+
+/// The next invoice number in a series.
+///
+/// One row per financial year, so April starts at 0001 again. A table rather
+/// than counting existing invoices because a count is not safe under
+/// concurrency: two payments landing together would both read the same total and
+/// claim the same number, and rule 46 gives no way to fix a duplicate after it
+/// has been printed. Incrementing a locked row is.
+model InvoiceCounter {
+  /// The Indian financial year, "26-27".
+  series    String   @id
+  /// The highest number handed out so far. Starts at 1, not 0.
+  lastUsed  Int      @default(0)
+  updatedAt DateTime @updatedAt
 }

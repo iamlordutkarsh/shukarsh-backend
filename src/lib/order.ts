@@ -10,6 +10,9 @@ function serializeLineProduct(product: any) {
     name: product.name,
     slug: product.slug,
     images: product.images ?? [],
+    // Required on a tax invoice line. Null where the catalogue predates it, and
+    // the invoice prints a dash rather than inventing one.
+    hsn: product.hsn ?? null,
   };
 }
 
@@ -68,6 +71,8 @@ export function serializeOrder(order: any, options?: { includeCost?: boolean }) 
     sgstTotal: Number(order.sgstTotal ?? 0),
     igstTotal: Number(order.igstTotal ?? 0),
     placeOfSupply: order.placeOfSupply ?? null,
+    invoiceNumber: order.invoiceNumber ?? null,
+    invoicedAt: order.invoicedAt ?? null,
     courierId: order.courierId ?? null,
     courierName: order.courierName ?? null,
     shippingAddress: order.shippingAddress ?? null,

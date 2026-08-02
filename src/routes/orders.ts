@@ -10,6 +10,7 @@ import { quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
 import { recoverLines } from "../lib/cart-recovery";
 import { recordRedemption } from "../lib/coupon";
 import { NotEnoughStockError, moveStock } from "../lib/inventory";
+import { assignInvoiceNumber } from "../lib/invoice";
 import { serializeProduct } from "../lib/product";
 import { canonicalState, pincodeSchema, shippingAddressSchema } from "../lib/address";
 import { buildQuote, serializeQuote } from "../lib/quote";
@@ -102,7 +103,7 @@ const orderInclude = {
   shipment: true,
   items: {
     include: {
-      product: { select: { id: true, name: true, slug: true, images: true } },
+      product: { select: { id: true, name: true, slug: true, images: true, hsn: true } },
     },
   },
   returns: { orderBy: { createdAt: "desc" }, include: returnInclude },
@@ -326,6 +327,11 @@ router.post("/create", async (req, res) => {
             amount: quote.discountTotal,
           });
         }
+
+        // Cash never has a payment moment before the parcel goes out, so the
+        // order being placed is the only point at which to number it. Prepaid is
+        // numbered when the money lands instead, in markOrderPaid.
+        await assignInvoiceNumber(tx, created.id);
       }
 
       return created;

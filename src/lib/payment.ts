@@ -2,6 +2,7 @@ import crypto from "crypto";
 import { prisma } from "./prisma";
 import { recordRedemption } from "./coupon";
 import { moveStock } from "./inventory";
+import { assignInvoiceNumber } from "./invoice";
 
 export interface PaidResult {
   orderId: string;
@@ -88,6 +89,13 @@ export async function markOrderPaid(params: {
         email: order.email,
         amount: Number(order.discountTotal),
       });
+    }
+
+    // Numbered here because this is the moment the sale exists: the goods are
+    // spoken for and the money is in. Not for a cancelled one — that is owed a
+    // refund, and an invoice for it would be a supply that never happened.
+    if (!cancelled) {
+      await assignInvoiceNumber(tx, order.id);
     }
 
     return { orderId: order.id, alreadyPaid: false };
