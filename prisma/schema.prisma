@@ -108,19 +108,28 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+/// A delivery address a customer chose to keep.
+///
+/// `name` and `phone` are nullable only so the migration that added them could
+/// not fail on deploy; the write path requires both, because a parcel needs
+/// somebody to hand it to and a courier needs someone to ring.
 model Address {
   id        String   @id @default(uuid())
   userId    String
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name      String?
+  phone     String?
   line1     String
   line2     String?
   city      String
   state     String?
   zip       String?
-  country   String   @default("US")
+  country   String   @default("India")
   isDefault Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model Category {
