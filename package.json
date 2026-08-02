@@ -16,6 +16,7 @@
     "fix:stock": "ts-node scripts/fix-stock-drift.ts",
     "fix:gst": "ts-node scripts/fix-gst-rate.ts",
     "check:catalogue": "ts-node scripts/check-catalogue.ts",
+    "check:reset": "ts-node scripts/check-password-reset.ts",
     "seed:structure": "ts-node scripts/seed-structure.ts",
     "check:emails": "ts-node scripts/check-emails.ts",
     "rates:survey": "ts-node scripts/shipping-rates.ts",

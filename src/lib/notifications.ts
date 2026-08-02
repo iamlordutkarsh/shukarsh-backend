@@ -525,3 +525,47 @@ export async function sendLowStockDigest(products: LowStockLine[]): Promise<void
     console.error("Low stock digest email failed:", error);
   }
 }
+/**
+ * The reset link itself.
+ *
+ * Returns whether it went, because the route must not claim a mail was sent when
+ * the mailer is not configured — a shop that silently swallows these leaves the
+ * customer refreshing an inbox forever.
+ *
+ * The token is in the URL and nowhere else: not in the subject, not in the body
+ * text, so a screenshot of the mail without the link is not enough to take the
+ * account. Encoded because it is base64url and a mail client will not be the
+ * first thing to mangle a query string.
+ */
+export async function sendPasswordReset(
+  email: string,
+  token: string,
+  firstName?: string | null
+): Promise<boolean> {
+  if (!isEmailConfigured()) return false;
+
+  const link = `${storeUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+  const name = (firstName ?? "").trim().split(/\s+/)[0];
+
+  try {
+    await sendEmail({
+      to: email,
+      subject: "Reset your Shukarsh password",
+      html: layout(
+        name ? `${escapeHtml(name)}, let's get you back in` : "Let's get you back in",
+        "Someone asked to reset the password on this address. If that was not you, nothing has changed and you can ignore this email.",
+        `<p style="margin:0 0 24px"><a href="${link}"
+            style="display:inline-block;padding:12px 24px;border-radius:999px;background:#8b6bff;color:#ffffff;font-size:14px;font-weight:600;text-decoration:none">Choose a new password</a></p>
+         <p style="margin:0;font-size:12px;line-height:1.6;color:#9a94ad">
+           This link works once and expires in an hour. Asking again replaces it,
+           so only the newest email will work.
+         </p>`
+      ),
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Password reset email failed:", error);
+    return false;
+  }
+}

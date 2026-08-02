@@ -4,7 +4,9 @@ import { prisma } from "../lib/prisma";
 import { adoptLowercaseEmail, emailField, findUserByEmail } from "../lib/account";
 import { hashPassword, verifyPassword, generateToken } from "../lib/auth";
 import { authenticate } from "../middleware/auth";
-import { loginLimiter, registerLimiter } from "../middleware/rate-limit";
+import { loginLimiter, passwordResetLimiter, registerLimiter } from "../middleware/rate-limit";
+import { consumeResetToken, issueResetToken } from "../lib/password-reset";
+import { sendPasswordReset } from "../lib/notifications";
 
 const router = Router();
 
@@ -122,6 +124,87 @@ router.post("/change-password", authenticate, loginLimiter, async (req, res) => 
   await prisma.user.update({ where: { id: user.id }, data: { password: hashPassword(newPassword) } });
 
   res.json({ message: "Password changed" });
+});
+
+const forgotPasswordSchema = z.object({ email: emailField });
+
+/**
+ * Always answers the same way.
+ *
+ * Saying "no account with that address" turns this into a membership oracle:
+ * anyone can feed it a list and learn who shops here, and for a small shop that
+ * is a list of a named person's customers. So an unknown address gets the same
+ * 200 and the same wording as a known one, and the only difference is whether an
+ * email goes out.
+ *
+ * That does mean a typo looks identical to success. The copy on the page says
+ * "if we have an account for it", which is the honest way to word it.
+ */
+router.post("/forgot-password", passwordResetLimiter, async (req, res) => {
+  const result = forgotPasswordSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Enter the email address you signed up with" });
+    return;
+  }
+
+  const { email } = result.data;
+  const accepted = { message: "If we have an account for that address, a reset link is on its way." };
+
+  const user = await findUserByEmail(email);
+  if (!user) {
+    res.json(accepted);
+    return;
+  }
+
+  try {
+    const token = await issueResetToken(user.id);
+    // Sent to the address on the account rather than the one typed, so a
+    // difference in capitalisation cannot post the link somewhere else.
+    await sendPasswordReset(user.email, token, user.firstName);
+  } catch (error) {
+    // Logged, not surfaced: which addresses error is itself a signal, and the
+    // customer can do nothing with it either way.
+    console.error("Password reset request failed:", error);
+  }
+
+  res.json(accepted);
+});
+
+const resetPasswordSchema = z.object({
+  token: z.string().min(1),
+  password: z.string().min(6),
+});
+
+router.post("/reset-password", passwordResetLimiter, async (req, res) => {
+  const result = resetPasswordSchema.safeParse(req.body);
+  if (!result.success) {
+    res.status(400).json({ error: "Your new password needs at least 6 characters" });
+    return;
+  }
+
+  const { token, password } = result.data;
+
+  // Spends the token whether or not the rest succeeds, so a wrong guess cannot
+  // be retried against the same link.
+  const userId = await consumeResetToken(token);
+  if (!userId) {
+    res.status(400).json({ error: "That reset link has expired or has already been used." });
+    return;
+  }
+
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: { password: hashPassword(password) },
+    select: { id: true, email: true, firstName: true, lastName: true, role: true },
+  });
+
+  // Signed in on the spot. They have just proved they hold the address, which is
+  // the same thing the login form would ask for, and sending them back to it to
+  // retype a password chosen ten seconds ago is how people end up resetting
+  // twice.
+  const authToken = generateToken({ id: user.id, email: user.email, role: user.role });
+
+  res.json({ user, token: authToken });
 });
 
 router.get("/me", authenticate, async (req, res) => {

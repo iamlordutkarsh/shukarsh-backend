@@ -16,6 +16,22 @@ export const loginLimiter = rateLimit({
 });
 
 /**
+ * Reset request cap.
+ *
+ * Every request is counted, successes included: the point is not to stop
+ * guessing but to stop the endpoint being used to post mail at somebody. Without
+ * it, one address can be sent a hundred reset emails by anyone who knows it, and
+ * the shop's sending domain wears the complaint.
+ */
+export const passwordResetLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_PASSWORD_RESET_MAX) || 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many reset requests. Please wait a few minutes and try again." },
+});
+
+/**
  * Review writing cap.
  *
  * Only delivered customers can post at all, so this is not the spam defence; it

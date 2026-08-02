@@ -78,13 +78,34 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  addresses   Address[]
-  orders      Order[]
-  reviews     Review[]
-  wishlist    WishlistItem[]
-  redemptions CouponRedemption[]
-  returns     ReturnRequest[]
-  stockMoves  StockMove[]
+  addresses      Address[]
+  orders         Order[]
+  reviews        Review[]
+  wishlist       WishlistItem[]
+  redemptions    CouponRedemption[]
+  returns        ReturnRequest[]
+  stockMoves     StockMove[]
+  passwordResets PasswordResetToken[]
+}
+
+/// One click of "I forgot my password".
+///
+/// Only the SHA-256 of the emailed token is kept, never the token itself, so a
+/// dump of this table cannot be used to take an account: an attacker holding a
+/// hash still has nothing to put in the link. Rows are single use and short
+/// lived, and both facts are enforced when the token is redeemed rather than by
+/// a cleanup job that may not have run.
+model PasswordResetToken {
+  id        String    @id @default(uuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 model Address {
