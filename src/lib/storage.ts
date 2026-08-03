@@ -74,12 +74,37 @@ export async function uploadImage(
   return data.publicUrl;
 }
 
-/** Returns the object path when the URL points at our own bucket, otherwise null. */
+/**
+ * Returns the object path when the URL points at our own bucket, otherwise null.
+ *
+ * The host is checked, not just the path. Searching the string for the bucket
+ * marker accepts `https://anywhere.example/storage/v1/object/public/<bucket>/x.jpg`,
+ * because the marker is in there — just not at the start, and not on our domain.
+ * That is the whole check isCustomerUpload rests on, so it is parsed properly and
+ * matched against the origin we actually upload to.
+ *
+ * Fails closed when SUPABASE_URL is unset: no configured bucket means no URL can
+ * be ours, and refusing is the safe half.
+ */
 export function objectPathFromUrl(url: string): string | null {
-  const marker = `/storage/v1/object/public/${BUCKET}/`;
-  const index = url.indexOf(marker);
-  if (index === -1) return null;
-  const objectPath = url.slice(index + marker.length);
+  const base = process.env.SUPABASE_URL;
+  if (!base) return null;
+
+  let target: URL;
+  let ours: URL;
+  try {
+    target = new URL(url);
+    ours = new URL(base);
+  } catch {
+    return null;
+  }
+
+  if (target.origin !== ours.origin) return null;
+
+  const prefix = `/storage/v1/object/public/${BUCKET}/`;
+  if (!target.pathname.startsWith(prefix)) return null;
+
+  const objectPath = target.pathname.slice(prefix.length);
   return objectPath ? decodeURIComponent(objectPath) : null;
 }
 
