@@ -75,29 +75,27 @@ export async function assignInvoiceNumber(
   orderId: string,
   when = new Date()
 ): Promise<string | null> {
-  const order = await tx.order.findUnique({
-    where: { id: orderId },
-    select: { invoiceNumber: true },
-  });
+  /**
+   * The order row is locked before the counter is touched, and that ordering is
+   * the whole point.
+   *
+   * Reading first and claiming afterwards looks safe — the loser's write is
+   * conditional and does nothing — but by then it has already incremented the
+   * counter, and the number it took is never issued. The series ends up with a
+   * hole in it, which is precisely the thing this file exists to avoid. Locking
+   * first makes the second caller wait, see the number the first one wrote, and
+   * leave the counter alone.
+   */
+  const locked = await tx.$queryRaw<{ invoiceNumber: string | null }[]>`
+    SELECT "invoiceNumber" FROM "Order" WHERE id = ${orderId} FOR UPDATE
+  `;
 
-  if (!order || order.invoiceNumber) return order?.invoiceNumber ?? null;
+  const order = locked[0];
+  if (!order) return null;
+  if (order.invoiceNumber) return order.invoiceNumber;
 
   const invoiceNumber = await nextInvoiceNumber(tx, when);
-
-  // Conditional on it still being unnumbered, so if two callers got this far the
-  // second updates nothing rather than overwriting the first.
-  const claimed = await tx.order.updateMany({
-    where: { id: orderId, invoiceNumber: null },
-    data: { invoiceNumber, invoicedAt: when },
-  });
-
-  if (claimed.count === 0) {
-    const current = await tx.order.findUnique({
-      where: { id: orderId },
-      select: { invoiceNumber: true },
-    });
-    return current?.invoiceNumber ?? null;
-  }
+  await tx.order.update({ where: { id: orderId }, data: { invoiceNumber, invoicedAt: when } });
 
   return invoiceNumber;
 }
