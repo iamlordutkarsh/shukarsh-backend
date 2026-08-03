@@ -2,8 +2,9 @@ import { Router } from "express";
 import { z } from "zod";
 import Razorpay from "razorpay";
 import crypto from "crypto";
-import { OrderStatus, ReturnOutcome, ReturnReason } from "@prisma/client";
+import { OrderStatus, Prisma, ReturnOutcome, ReturnReason } from "@prisma/client";
 import { prisma } from "../lib/prisma";
+import { foldStageCounts, isOrderStage, stageWhere } from "../lib/order-stage";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
 import { checkoutLimiter, quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
@@ -519,20 +520,27 @@ router.get("/:id/recover", recoveryLimiter, async (req, res) => {
  * Capped, because orderInclude pulls items, their products, the shipment and
  * every return on each row — one unpaged read of a year's orders is thousands of
  * joined rows through a pooled connection, and this endpoint is loaded on sign
- * in. The running totals are counted by the database over the whole set rather
- * than summed from the page, so a dashboard reading them stays right no matter
- * how few rows came back.
+ * in.
+ *
+ * Both the filtering and the counting are done here rather than in the panel.
+ * Once the list is a page, a queue narrowed in the browser only ever means
+ * "among the most recent hundred", and it reports an empty approval queue with
+ * complete confidence while the order that has waited longest sits on page four.
+ * `stageCounts` and `totals` are counted over everything, so the badges and the
+ * running total stay true whatever page is on screen.
  */
-const ORDER_PAGE_DEFAULT = 100;
+const ORDER_PAGE_DEFAULT = 50;
 const ORDER_PAGE_MAX = 200;
 
 router.get("/", authenticate, async (req, res) => {
-  const where = req.user!.role === "ADMIN" ? {} : { userId: req.user!.id };
+  const owner = req.user!.role === "ADMIN" ? {} : { userId: req.user!.id };
+  const stage = isOrderStage(req.query.stage) ? req.query.stage : "ALL";
+  const where: Prisma.OrderWhereInput = { ...owner, ...stageWhere(stage) };
 
   const page = Math.max(1, Number(req.query.page) || 1);
   const limit = Math.max(1, Math.min(ORDER_PAGE_MAX, Number(req.query.limit) || ORDER_PAGE_DEFAULT));
 
-  const [orders, total, paid] = await Promise.all([
+  const [orders, total, paid, groups] = await Promise.all([
     prisma.order.findMany({
       where,
       orderBy: { createdAt: "desc" },
@@ -541,9 +549,13 @@ router.get("/", authenticate, async (req, res) => {
       include: orderInclude,
     }),
     prisma.order.count({ where }),
-    prisma.order.aggregate({
-      where: { ...where, paymentStatus: "PAID" },
-      _sum: { totalAmount: true },
+    // Scoped to the owner, not the stage: this is the shop's takings, and it
+    // should not move about as somebody clicks between queues.
+    prisma.order.aggregate({ where: { ...owner, paymentStatus: "PAID" }, _sum: { totalAmount: true } }),
+    prisma.order.groupBy({
+      by: ["status", "paymentStatus", "paymentMethod"],
+      where: owner,
+      _count: { _all: true },
     }),
   ]);
 
@@ -552,8 +564,13 @@ router.get("/", authenticate, async (req, res) => {
   const includeCost = req.user!.role === "ADMIN";
   res.json({
     orders: orders.map((order) => serializeOrder(order, { includeCost })),
+    stage,
     pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
-    totals: { count: total, paidRevenue: Number(paid._sum.totalAmount ?? 0) },
+    stageCounts: foldStageCounts(groups),
+    totals: {
+      count: groups.reduce((sum, group) => sum + group._count._all, 0),
+      paidRevenue: Number(paid._sum.totalAmount ?? 0),
+    },
   });
 });
 
