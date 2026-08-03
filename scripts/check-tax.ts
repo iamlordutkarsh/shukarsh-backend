@@ -315,6 +315,45 @@ check(
   249
 );
 
+// An order can come back across two requests, and the delivery is owed once.
+const inTwoParcels = {
+  ...paidDelivery,
+  returns: [
+    { id: "r1", status: "APPROVED", items: [{ orderItemId: "l1", quantity: 1 }] },
+    { id: "r2", status: "REQUESTED", items: [{ orderItemId: "l2", quantity: 1 }] },
+  ],
+};
+
+check(
+  "the second half of an order finishes it, so it carries the delivery",
+  refundBreakdown(inTwoParcels, [{ orderItemId: "l2", quantity: 1 }], { excludeReturnId: "r2" })
+    .shippingAmount,
+  49
+);
+check(
+  "the first half does not, because nothing else was agreed yet",
+  refundBreakdown(inTwoParcels, [{ orderItemId: "l1", quantity: 1 }], { excludeReturnId: "r1" })
+    .shippingAmount,
+  0
+);
+check(
+  "a refused request releases nothing, so the other half is still partial",
+  refundBreakdown(
+    {
+      ...paidDelivery,
+      returns: [{ id: "r1", status: "REJECTED", items: [{ orderItemId: "l1", quantity: 1 }] }],
+    },
+    [{ orderItemId: "l2", quantity: 1 }],
+    { excludeReturnId: "r2" }
+  ).shippingAmount,
+  0
+);
+check(
+  "an order with no lines is not an order that came back whole",
+  refundBreakdown({ itemsTotal: 0, discountTotal: 0, shippingAmount: 49, items: [] }, []).shippingAmount,
+  0
+);
+
 // Orders placed before the tax columns existed carry zeroes in them.
 const legacyOrder = {
   itemsTotal: 1000,

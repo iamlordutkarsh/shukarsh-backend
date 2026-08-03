@@ -154,7 +154,11 @@ router.patch("/:id", authenticate, requireAdmin, async (req, res) => {
                   request.items.map((item) => ({
                     orderItemId: item.orderItemId,
                     quantity: item.quantity,
-                  }))
+                  })),
+                  // Its own row on the order still reads REQUESTED here, but the
+                  // lines are already being passed in. Counting both would double
+                  // this request against itself.
+                  { excludeReturnId: request.id }
                 ).total,
               }
             : {}),

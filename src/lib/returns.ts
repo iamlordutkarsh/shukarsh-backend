@@ -5,6 +5,16 @@ const DEFAULT_WINDOW_DAYS = 7;
 /** Requests that still have a claim on the goods. */
 const LIVE_STATUSES = ["REQUESTED", "APPROVED", "RECEIVED", "COMPLETED"] as const;
 
+/**
+ * Requests the shop has already said yes to.
+ *
+ * Narrower than LIVE_STATUSES on purpose, and only used for deciding who carries
+ * the delivery refund. A request nobody has looked at yet is a claim, not a
+ * commitment, and counting it would let two pending requests each believe they
+ * were the one finishing the order off.
+ */
+const DECIDED_STATUSES = ["APPROVED", "RECEIVED", "COMPLETED"] as const;
+
 /** Requests waiting on us to do something. */
 const OPEN_STATUSES = ["REQUESTED", "APPROVED", "RECEIVED"] as const;
 
@@ -166,6 +176,41 @@ export interface RefundBreakdown {
 }
 
 /**
+ * Whether these lines, plus everything the shop has already agreed to take back,
+ * account for every unit on the order.
+ *
+ * Counted across returns rather than within one, because a customer who sends
+ * back one dress in March and the other in April has still returned the whole
+ * order — and under a per-request rule neither half ever reaches "everything",
+ * so the delivery they paid is never refunded at all.
+ *
+ * Only decided requests count, which is what stops it being paid twice. Of two
+ * requests that between them finish an order, the first to be approved sees the
+ * other still sitting at REQUESTED and does not complete it; the second sees the
+ * first as APPROVED and does. Exactly one of them carries the delivery.
+ */
+function completesTheOrder(order: any, lines: RefundLine[], excludeReturnId?: string): boolean {
+  const items = order.items ?? [];
+  // No lines is not "everything back", whatever every() says about empty arrays.
+  if (items.length === 0) return false;
+
+  const back = new Map<string, number>();
+  const add = (orderItemId: string, quantity: number) => {
+    back.set(orderItemId, (back.get(orderItemId) ?? 0) + quantity);
+  };
+
+  for (const line of lines) add(line.orderItemId, line.quantity);
+
+  for (const other of order.returns ?? []) {
+    if (excludeReturnId && other.id === excludeReturnId) continue;
+    if (!DECIDED_STATUSES.includes(other.status)) continue;
+    for (const item of other.items ?? []) add(item.orderItemId, item.quantity);
+  }
+
+  return items.every((item: any) => (back.get(item.id) ?? 0) >= item.quantity);
+}
+
+/**
  * What a return is worth.
  *
  * Refunding the sticker price would hand back more than was taken whenever a
@@ -173,8 +218,15 @@ export interface RefundBreakdown {
  * not worth a third of the discount to us and the whole dress to the customer.
  * Delivery only comes back when nothing is being kept, since we paid the
  * courier either way.
+ *
+ * Pass the id of the request being priced so its own row, if the order carries
+ * it, is not counted on top of the lines handed in.
  */
-export function refundBreakdown(order: any, requested: RefundLine[]): RefundBreakdown {
+export function refundBreakdown(
+  order: any,
+  requested: RefundLine[],
+  options?: { excludeReturnId?: string }
+): RefundBreakdown {
   const byId = new Map<string, any>((order.items ?? []).map((item: any) => [item.id, item]));
   const lines: RefundBreakdown["lines"] = [];
   let itemsAmount = 0;
@@ -193,10 +245,7 @@ export function refundBreakdown(order: any, requested: RefundLine[]): RefundBrea
     itemsAmount = round2(itemsAmount + amount);
   }
 
-  const everythingBack = (order.items ?? []).every((item: any) => {
-    const asked = lines.find((line) => line.orderItemId === item.id);
-    return asked?.quantity === item.quantity;
-  });
+  const everythingBack = completesTheOrder(order, lines, options?.excludeReturnId);
 
   const shippingAmount = everythingBack ? round2(Number(order.shippingAmount ?? 0)) : 0;
   // A customer who sends back everything should be left where they started, and
@@ -281,7 +330,8 @@ export function serializeAdminReturn(request: any) {
     (request.items ?? []).map((item: any) => ({
       orderItemId: item.orderItemId,
       quantity: item.quantity,
-    }))
+    })),
+    { excludeReturnId: request.id }
   );
 
   return {
