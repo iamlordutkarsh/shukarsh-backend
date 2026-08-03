@@ -162,12 +162,31 @@ router.post("/", authenticate, reviewLimiter, async (req, res) => {
 /** Withdraws the shopper's own review. */
 router.delete("/:id", authenticate, async (req, res) => {
   const id = req.params.id as string;
-  const review = await prisma.review.findUnique({ where: { id }, select: { userId: true } });
+  const review = await prisma.review.findUnique({
+    where: { id },
+    select: { userId: true, hiddenAt: true },
+  });
 
   // Absent and someone else's answer the same way, so this cannot be used to
   // find out whether an id exists.
   if (!review || review.userId !== req.user!.id) {
     res.status(404).json({ error: "Review not found" });
+    return;
+  }
+
+  /**
+   * A review the shop took down cannot be withdrawn.
+   *
+   * The upsert above deliberately leaves hiddenAt alone so editing cannot put
+   * abuse back up — but deleting the row and posting again does exactly that,
+   * because the second post takes the create branch and creates a clean one.
+   * Refusing here is what makes the takedown mean something.
+   */
+  if (review.hiddenAt) {
+    res.status(409).json({
+      error:
+        "This review was taken down by the shop, so it cannot be removed here. Write to us if you think that was a mistake.",
+    });
     return;
   }
 
