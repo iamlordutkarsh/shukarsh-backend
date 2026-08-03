@@ -6,7 +6,7 @@ import { OrderStatus, ReturnOutcome, ReturnReason } from "@prisma/client";
 import { prisma } from "../lib/prisma";
 import { verifyToken } from "../lib/auth";
 import { authenticate, requireAdmin } from "../middleware/auth";
-import { quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
+import { checkoutLimiter, quoteLimiter, recoveryLimiter } from "../middleware/rate-limit";
 import { recoverLines } from "../lib/cart-recovery";
 import { recordRedemption } from "../lib/coupon";
 import { NotEnoughStockError, moveStock } from "../lib/inventory";
@@ -169,7 +169,7 @@ router.post("/quote", quoteLimiter, async (req, res) => {
   }
 });
 
-router.post("/create", async (req, res) => {
+router.post("/create", checkoutLimiter, async (req, res) => {
   const result = createOrderSchema.safeParse(req.body);
   if (!result.success) {
     res.status(400).json({ error: "Invalid input", details: result.error.flatten() });

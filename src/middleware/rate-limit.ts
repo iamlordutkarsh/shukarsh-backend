@@ -98,6 +98,25 @@ export const recoveryLimiter = rateLimit({
 });
 
 /**
+ * Placing an order.
+ *
+ * Not a guessing guard like the others: this endpoint takes no login, and a cash
+ * order moves stock off the shelf the moment it is placed. Uncapped, a loop of
+ * guest COD orders empties the catalogue without a rupee changing hands, and
+ * every prepaid attempt opens a Razorpay order we then have to reconcile.
+ *
+ * Loose enough that a household behind one address can all check out, and a
+ * customer who fumbles the payment sheet a few times is never turned away.
+ */
+export const checkoutLimiter = rateLimit({
+  windowMs: WINDOW_MS,
+  limit: Number(process.env.RATE_LIMIT_CHECKOUT_MAX) || 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: "Too many checkout attempts. Please wait a few minutes and try again." },
+});
+
+/**
  * The same guard for pricing a bag, which also takes a code. Set far higher
  * because the checkout page calls it legitimately on every keystroke of an
  * address: too tight here and checkout stops showing a total.
