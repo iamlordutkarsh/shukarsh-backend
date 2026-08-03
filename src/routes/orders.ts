@@ -513,19 +513,48 @@ router.get("/:id/recover", recoveryLimiter, async (req, res) => {
   });
 });
 
+/**
+ * Orders: everyone's for an admin, your own otherwise.
+ *
+ * Capped, because orderInclude pulls items, their products, the shipment and
+ * every return on each row — one unpaged read of a year's orders is thousands of
+ * joined rows through a pooled connection, and this endpoint is loaded on sign
+ * in. The running totals are counted by the database over the whole set rather
+ * than summed from the page, so a dashboard reading them stays right no matter
+ * how few rows came back.
+ */
+const ORDER_PAGE_DEFAULT = 100;
+const ORDER_PAGE_MAX = 200;
+
 router.get("/", authenticate, async (req, res) => {
   const where = req.user!.role === "ADMIN" ? {} : { userId: req.user!.id };
 
-  const orders = await prisma.order.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    include: orderInclude,
-  });
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const limit = Math.max(1, Math.min(ORDER_PAGE_MAX, Number(req.query.limit) || ORDER_PAGE_DEFAULT));
+
+  const [orders, total, paid] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * limit,
+      take: limit,
+      include: orderInclude,
+    }),
+    prisma.order.count({ where }),
+    prisma.order.aggregate({
+      where: { ...where, paymentStatus: "PAID" },
+      _sum: { totalAmount: true },
+    }),
+  ]);
 
   // Wrapped rather than passed straight to map, or the array index would land
   // in the options slot.
   const includeCost = req.user!.role === "ADMIN";
-  res.json({ orders: orders.map((order) => serializeOrder(order, { includeCost })) });
+  res.json({
+    orders: orders.map((order) => serializeOrder(order, { includeCost })),
+    pagination: { page, limit, total, pages: Math.max(1, Math.ceil(total / limit)) },
+    totals: { count: total, paidRevenue: Number(paid._sum.totalAmount ?? 0) },
+  });
 });
 
 router.get("/:id", authenticate, async (req, res) => {
